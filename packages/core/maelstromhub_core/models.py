@@ -301,6 +301,66 @@ class SignalRunResult(DomainModel):
     total_signals: int
 
 
+class BacktestStatus(StrEnum):
+    STARTED = "started"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class BacktestRunCreate(DomainModel):
+    starting_balance: float = 10_000.0
+    fee_bps: float = 5.0
+    slippage_bps: float = 2.0
+
+
+class BacktestMetrics(DomainModel):
+    total_return: float = 0.0
+    max_drawdown: float = 0.0
+    win_rate: float = 0.0
+    trade_count: int = 0
+    profit_factor: float = 0.0
+
+
+class BacktestTrade(DomainModel):
+    id: str
+    backtest_run_id: str
+    timestamp: datetime
+    symbol: str
+    side: str
+    entry_price: float
+    exit_price: float
+    quantity: float
+    pnl: float
+    fees: float
+    reason: str
+
+
+class EquityCurveSnapshot(DomainModel):
+    id: str
+    backtest_run_id: str
+    timestamp: datetime
+    equity: float
+    drawdown: float
+
+
+class BacktestRun(DomainModel):
+    id: str
+    strategy_version_id: str
+    dataset_id: str
+    status: BacktestStatus
+    starting_balance: float
+    fee_bps: float
+    slippage_bps: float
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
+    metrics: dict[str, float | int | str] = Field(default_factory=dict)
+
+
+class BacktestRunDetail(BacktestRun):
+    trades: list[BacktestTrade] = Field(default_factory=list)
+    equity_curve: list[EquityCurveSnapshot] = Field(default_factory=list)
+
+
 class AuditEvent(DomainModel):
     id: str
     actor: str

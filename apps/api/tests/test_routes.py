@@ -20,7 +20,7 @@ from app.db.research_repositories import (
     list_dataset_candles,
     run_ingestion_job,
 )
-from app.db.models import FeatureSnapshotORM
+from app.db.models import CandleORM, FeatureSnapshotORM, SignalORM
 from app.db.repositories import create_strategy
 from app.db.session import get_session
 from app.db.strategy_repositories import (
@@ -554,3 +554,113 @@ async def test_strategy_runner_generates_idempotent_sma_signals() -> None:
     assert [signal.side for signal in reversed(signals)] == ["short", "long"]
     assert all(signal.confidence == 0.9 for signal in signals)
     assert all(signal.suggested_size == 0.25 for signal in signals)
+
+
+@pytest.mark.anyio
+async def test_backtest_run_replays_long_flat_signals_and_persists_results() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        asset = await create_asset(session, AssetCreate(symbol="BTC", venue="hyperliquid"))
+        timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+        dataset = await create_dataset(
+            session,
+            DatasetCreate(asset_id=asset.id, timeframe_id=timeframe.id, name="BTC 1h research dataset"),
+        )
+        strategy = await create_strategy(
+            session,
+            StrategyCreate(name="Backtest study", description="Deterministic long flat replay."),
+        )
+        version = await create_strategy_version(
+            session,
+            strategy.id,
+            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+        )
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        for index, close in enumerate([100.0, 110.0, 120.0]):
+            timestamp = start + timedelta(hours=index)
+            session.add(
+                CandleORM(
+                    id=f"candle-{index}",
+                    dataset_id=dataset.id,
+                    opened_at=timestamp,
+                    open=close,
+                    high=close,
+                    low=close,
+                    close=close,
+                    volume=100.0,
+                )
+            )
+        session.add(
+            SignalORM(
+                id="signal-long",
+                strategy_version_id=version.id,
+                strategy_id=strategy.id,
+                dataset_id=dataset.id,
+                timestamp=start,
+                symbol="BTC",
+                side="long",
+                confidence=1.0,
+                reason="enter",
+                suggested_size=1.0,
+                metadata_json={},
+            )
+        )
+        session.add(
+            SignalORM(
+                id="signal-flat",
+                strategy_version_id=version.id,
+                strategy_id=strategy.id,
+                dataset_id=dataset.id,
+                timestamp=start + timedelta(hours=2),
+                symbol="BTC",
+                side="flat",
+                confidence=1.0,
+                reason="exit",
+                suggested_size=0.0,
+                metadata_json={},
+            )
+        )
+        await session.commit()
+
+    async def override_get_session() -> AsyncIterator[AsyncSessionAdapter]:
+        with session_factory() as session:
+            yield AsyncSessionAdapter(session)
+
+    app.dependency_overrides[get_session] = override_get_session
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
+        response = await test_client.post(
+            f"/strategy-versions/{version.id}/backtests",
+            json={"starting_balance": 1000, "fee_bps": 0, "slippage_bps": 0},
+        )
+        run = response.json()
+        list_response = await test_client.get(f"/strategy-versions/{version.id}/backtests")
+        get_response = await test_client.get(f"/backtests/{run['id']}")
+        audit_response = await test_client.get("/audit-events")
+
+    app.dependency_overrides.clear()
+    engine.dispose()
+
+    assert response.status_code == 201
+    assert run["status"] == "succeeded"
+    assert run["metrics"]["trade_count"] == 1
+    assert run["metrics"]["win_rate"] == 1.0
+    assert run["metrics"]["total_return"] == 0.2
+    assert run["trades"][0]["pnl"] == 200.0
+    assert len(run["equity_curve"]) == 3
+    assert list_response.json()["backtests"][0]["id"] == run["id"]
+    assert get_response.json()["id"] == run["id"]
+    assert {event["action"] for event in audit_response.json()["audit_events"]} >= {
+        "started_backtest",
+        "succeeded_backtest",
+    }

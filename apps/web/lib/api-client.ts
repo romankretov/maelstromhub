@@ -141,6 +141,54 @@ export type SignalRunResult = {
   total_signals: number;
 };
 
+export type BacktestStatus = "started" | "succeeded" | "failed";
+
+export type BacktestRunCreate = {
+  starting_balance?: number;
+  fee_bps?: number;
+  slippage_bps?: number;
+};
+
+export type BacktestTrade = {
+  id: string;
+  backtest_run_id: string;
+  timestamp: string;
+  symbol: string;
+  side: string;
+  entry_price: number;
+  exit_price: number;
+  quantity: number;
+  pnl: number;
+  fees: number;
+  reason: string;
+};
+
+export type EquityCurveSnapshot = {
+  id: string;
+  backtest_run_id: string;
+  timestamp: string;
+  equity: number;
+  drawdown: number;
+};
+
+export type BacktestRun = {
+  id: string;
+  strategy_version_id: string;
+  dataset_id: string;
+  status: BacktestStatus;
+  starting_balance: number;
+  fee_bps: number;
+  slippage_bps: number;
+  created_at: string;
+  finished_at: string | null;
+  metrics: Record<string, number | string>;
+};
+
+export type BacktestRunDetail = BacktestRun & {
+  trades: BacktestTrade[];
+  equity_curve: EquityCurveSnapshot[];
+};
+
 export type IdeaCreate = {
   title: string;
   thesis: string;
@@ -321,6 +369,25 @@ export async function runStrategySignals(versionId: string): Promise<SignalRunRe
 export async function getStrategySignals(versionId: string): Promise<Signal[]> {
   const body = await request<{ signals: Signal[] }>(`/strategy-versions/${versionId}/signals`);
   return body.signals;
+}
+
+export async function createBacktest(
+  versionId: string,
+  payload: BacktestRunCreate,
+): Promise<BacktestRunDetail> {
+  return request<BacktestRunDetail>(`/strategy-versions/${versionId}/backtests`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getStrategyVersionBacktests(versionId: string): Promise<BacktestRun[]> {
+  const body = await request<{ backtests: BacktestRun[] }>(`/strategy-versions/${versionId}/backtests`);
+  return body.backtests;
+}
+
+export async function getBacktest(backtestId: string): Promise<BacktestRunDetail> {
+  return request<BacktestRunDetail>(`/backtests/${backtestId}`);
 }
 
 export async function getAuditEvents(): Promise<AuditEvent[]> {

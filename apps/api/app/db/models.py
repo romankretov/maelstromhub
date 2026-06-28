@@ -220,6 +220,7 @@ class StrategyVersionORM(Base):
     template: Mapped[StrategyTemplateORM] = relationship(back_populates="versions")
     dataset: Mapped[DatasetORM] = relationship(back_populates="strategy_versions")
     signals: Mapped[list["SignalORM"]] = relationship(back_populates="strategy_version", passive_deletes=True)
+    backtest_runs: Mapped[list["BacktestRunORM"]] = relationship(back_populates="strategy_version", passive_deletes=True)
 
 
 class SignalORM(Base):
@@ -246,6 +247,59 @@ class SignalORM(Base):
     strategy_version: Mapped[StrategyVersionORM] = relationship(back_populates="signals")
     strategy: Mapped[StrategyORM] = relationship(back_populates="signals")
     dataset: Mapped[DatasetORM] = relationship(back_populates="signals")
+
+
+class BacktestRunORM(Base):
+    __tablename__ = "backtest_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    strategy_version_id: Mapped[str] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    starting_balance: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    fee_bps: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False)
+    slippage_bps: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+
+    strategy_version: Mapped[StrategyVersionORM] = relationship(back_populates="backtest_runs")
+    trades: Mapped[list["BacktestTradeORM"]] = relationship(back_populates="backtest_run", passive_deletes=True)
+    equity_curve: Mapped[list["EquityCurveSnapshotORM"]] = relationship(back_populates="backtest_run", passive_deletes=True)
+
+
+class BacktestTradeORM(Base):
+    __tablename__ = "backtest_trades"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    backtest_run_id: Mapped[str] = mapped_column(ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(80), nullable=False)
+    side: Mapped[str] = mapped_column(String(20), nullable=False)
+    entry_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    exit_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    pnl: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    fees: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+    backtest_run: Mapped[BacktestRunORM] = relationship(back_populates="trades")
+
+
+class EquityCurveSnapshotORM(Base):
+    __tablename__ = "equity_curve_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    backtest_run_id: Mapped[str] = mapped_column(ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    equity: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    drawdown: Mapped[float] = mapped_column(Numeric(12, 8), nullable=False)
+
+    backtest_run: Mapped[BacktestRunORM] = relationship(back_populates="equity_curve")
 
 
 class FeatureORM(Base):

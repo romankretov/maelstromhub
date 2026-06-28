@@ -1,19 +1,13 @@
-import { TestTubeDiagonal } from "lucide-react";
-
-import { EmptyState } from "@/components/shell/empty-state";
 import { PageShell } from "@/components/shell/page-shell";
+import { BacktestStudioClient } from "@/components/workflow/backtest-studio-client";
 
 export default function BacktestStudioPage() {
   return (
     <PageShell
       title="Backtest Studio"
-      description="Prepare a future workspace for deterministic strategy evaluation and comparable research outputs."
+      description="Replay generated strategy signals against dataset candles and inspect the first performance readout."
     >
-      <EmptyState
-        icon={TestTubeDiagonal}
-        title="Backtesting is not implemented"
-        description="This page reserves the workflow step for future backtest runners, assumptions, and result comparison without pretending results exist today."
-      />
+      <BacktestStudioClient />
     </PageShell>
   );
 }

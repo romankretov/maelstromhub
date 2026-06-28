@@ -3,6 +3,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.backtest_repositories import (
+    create_backtest_run,
+    get_backtest_run,
+    list_strategy_version_backtests,
+)
 from app.db.repositories import (
     create_idea,
     create_strategy,
@@ -20,6 +25,9 @@ from app.db.strategy_repositories import (
 )
 from maelstromhub_core import (
     AuditEvent,
+    BacktestRun,
+    BacktestRunCreate,
+    BacktestRunDetail,
     Idea,
     IdeaCreate,
     Signal,
@@ -83,6 +91,25 @@ async def post_strategy_version_signals(version_id: str, session: SessionDepende
 @router.get("/strategy-versions/{version_id}/signals")
 async def get_strategy_version_signals(version_id: str, session: SessionDependency) -> dict[str, list[Signal]]:
     return {"signals": await list_strategy_version_signals(session, version_id)}
+
+
+@router.post("/strategy-versions/{version_id}/backtests", status_code=201)
+async def post_strategy_version_backtest(
+    version_id: str,
+    payload: BacktestRunCreate,
+    session: SessionDependency,
+) -> BacktestRunDetail:
+    return await create_backtest_run(session, version_id, payload)
+
+
+@router.get("/strategy-versions/{version_id}/backtests")
+async def get_strategy_version_backtests(version_id: str, session: SessionDependency) -> dict[str, list[BacktestRun]]:
+    return {"backtests": await list_strategy_version_backtests(session, version_id)}
+
+
+@router.get("/backtests/{backtest_id}")
+async def get_backtest(backtest_id: str, session: SessionDependency) -> BacktestRunDetail:
+    return await get_backtest_run(session, backtest_id)
 
 
 @router.get("/audit-events")
