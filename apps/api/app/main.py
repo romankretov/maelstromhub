@@ -8,6 +8,7 @@ from app.config import settings
 from app.db.research_repositories import ensure_system_timeframes
 from app.db.session import async_session_factory
 from app.routes.research import router as research_router
+from app.routes.workspace import router as workspace_router
 from app.routes.workflow import router as workflow_router
 from maelstromhub_core import AssetSymbol
 
@@ -37,6 +38,7 @@ app.add_middleware(
 )
 app.include_router(research_router)
 app.include_router(workflow_router)
+app.include_router(workspace_router)
 
 
 @app.get("/health")

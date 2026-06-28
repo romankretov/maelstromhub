@@ -392,6 +392,47 @@ export type MarketIntelligence = {
   regime: MarketRegimeSnapshot | null;
 };
 
+export type WorkspaceRange = "7d" | "30d" | "90d" | "180d" | "1y";
+
+export type WorkspaceLoadMarketRequest = {
+  symbol: string;
+  timeframe: string;
+  range: WorkspaceRange;
+};
+
+export type WorkspaceMarketMetadata = {
+  symbol: string;
+  provider: string;
+  timeframe: string;
+  range: WorkspaceRange;
+  asset_id: string | null;
+};
+
+export type WorkspaceCandleSummary = {
+  total_candles: number;
+  first_candle_timestamp: string | null;
+  latest_candle_timestamp: string | null;
+};
+
+export type WorkspaceDataHealth = {
+  status: string;
+  detail: string;
+  last_ingestion_status: string | null;
+  queued_jobs: number;
+};
+
+export type WorkspaceState = {
+  market: WorkspaceMarketMetadata;
+  dataset_id: string | null;
+  candle_summary: WorkspaceCandleSummary;
+  latest_candles: Candle[];
+  feature_summary: FeatureSummary | null;
+  current_regime: MarketRegimeSnapshot | null;
+  available_strategy_templates: StrategyTemplate[];
+  latest_backtests: BacktestRun[];
+  data_health: WorkspaceDataHealth;
+};
+
 export type FeatureCreate = {
   dataset_id: string;
   name: string;
@@ -514,6 +555,22 @@ export async function getStrategyVersionBacktests(versionId: string): Promise<Ba
 
 export async function getBacktest(backtestId: string): Promise<BacktestRunDetail> {
   return request<BacktestRunDetail>(`/backtests/${backtestId}`);
+}
+
+export async function loadWorkspaceMarket(payload: WorkspaceLoadMarketRequest): Promise<WorkspaceState> {
+  return request<WorkspaceState>("/workspace/load-market", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getWorkspaceState(payload: WorkspaceLoadMarketRequest): Promise<WorkspaceState> {
+  const params = new URLSearchParams({
+    symbol: payload.symbol,
+    timeframe: payload.timeframe,
+    range: payload.range,
+  });
+  return request<WorkspaceState>(`/workspace/state?${params.toString()}`);
 }
 
 export async function createPaperAccount(payload: PaperAccountCreate): Promise<PaperAccount> {

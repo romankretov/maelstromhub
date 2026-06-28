@@ -352,6 +352,60 @@ async def test_dataset_creation_uses_default_timeframe(client: httpx.AsyncClient
 
 
 @pytest.mark.anyio
+async def test_workspace_load_market_creates_dataset_on_fresh_database(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/workspace/load-market",
+        json={"symbol": "btc", "timeframe": "1h", "range": "7d"},
+    )
+    body = response.json()
+    datasets_response = await client.get("/datasets")
+
+    assert response.status_code == 200
+    assert UUID(body["dataset_id"])
+    assert body["market"]["symbol"] == "BTC"
+    assert body["market"]["timeframe"] == "1h"
+    assert body["data_health"]["status"] == "queued"
+    assert body["data_health"]["queued_jobs"] == 1
+    assert datasets_response.json()["datasets"][0]["id"] == body["dataset_id"]
+
+
+@pytest.mark.anyio
+async def test_workspace_load_market_auto_seeds_timeframes(client: httpx.AsyncClient) -> None:
+    load_response = await client.post(
+        "/workspace/load-market",
+        json={"symbol": "SOL", "timeframe": "4h", "range": "30d"},
+    )
+    timeframes_response = await client.get("/timeframes")
+
+    assert load_response.status_code == 200
+    assert [timeframe["interval"] for timeframe in timeframes_response.json()["timeframes"]] == [
+        "1m",
+        "5m",
+        "15m",
+        "1h",
+        "4h",
+        "1d",
+    ]
+
+
+@pytest.mark.anyio
+async def test_workspace_users_do_not_need_to_create_timeframes(client: httpx.AsyncClient) -> None:
+    load_response = await client.post(
+        "/workspace/load-market",
+        json={"symbol": "HYPE", "timeframe": "15m", "range": "90d"},
+    )
+    timeframes_response = await client.get("/timeframes")
+    dataset_response = await client.get(f"/datasets/{load_response.json()['dataset_id']}")
+    selected_timeframe = next(
+        timeframe for timeframe in timeframes_response.json()["timeframes"] if timeframe["interval"] == "15m"
+    )
+
+    assert load_response.status_code == 200
+    assert dataset_response.status_code == 200
+    assert dataset_response.json()["timeframe_id"] == selected_timeframe["id"]
+
+
+@pytest.mark.anyio
 async def test_research_crud_chain(client: httpx.AsyncClient) -> None:
     asset, timeframe, dataset = await create_research_chain(client)
 

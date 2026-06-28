@@ -434,6 +434,53 @@ class StrategyPromotionResult(DomainModel):
     evaluation: BacktestEvaluation | None = None
 
 
+class WorkspaceRange(StrEnum):
+    DAYS_7 = "7d"
+    DAYS_30 = "30d"
+    DAYS_90 = "90d"
+    DAYS_180 = "180d"
+    YEAR_1 = "1y"
+
+
+class WorkspaceLoadMarketRequest(DomainModel):
+    symbol: str
+    timeframe: str
+    range: WorkspaceRange
+
+
+class WorkspaceMarketMetadata(DomainModel):
+    symbol: str
+    provider: str = "hyperliquid"
+    timeframe: str
+    range: WorkspaceRange
+    asset_id: UUID | None = None
+
+
+class WorkspaceCandleSummary(DomainModel):
+    total_candles: int = 0
+    first_candle_timestamp: datetime | None = None
+    latest_candle_timestamp: datetime | None = None
+
+
+class WorkspaceDataHealth(DomainModel):
+    status: str
+    detail: str
+    last_ingestion_status: str | None = None
+    queued_jobs: int = 0
+
+
+class WorkspaceState(DomainModel):
+    market: WorkspaceMarketMetadata
+    dataset_id: UUID | None = None
+    candle_summary: WorkspaceCandleSummary
+    latest_candles: list[Candle] = Field(default_factory=list)
+    feature_summary: FeatureSummary | None = None
+    current_regime: MarketRegimeSnapshot | None = None
+    available_strategy_templates: list[StrategyTemplate] = Field(default_factory=list)
+    latest_backtests: list[BacktestRun] = Field(default_factory=list)
+    data_health: WorkspaceDataHealth
+
+
 class PaperAccountStatus(StrEnum):
     ACTIVE = "active"
     CLOSED = "closed"

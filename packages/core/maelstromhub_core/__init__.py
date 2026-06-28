@@ -67,6 +67,12 @@ from maelstromhub_core.models import (
     TimeframeUpdate,
     TrendRegime,
     VolatilityRegime,
+    WorkspaceCandleSummary,
+    WorkspaceDataHealth,
+    WorkspaceLoadMarketRequest,
+    WorkspaceMarketMetadata,
+    WorkspaceRange,
+    WorkspaceState,
 )
 
 __all__ = [
@@ -138,4 +144,10 @@ __all__ = [
     "TimeframeUpdate",
     "TrendRegime",
     "VolatilityRegime",
+    "WorkspaceCandleSummary",
+    "WorkspaceDataHealth",
+    "WorkspaceLoadMarketRequest",
+    "WorkspaceMarketMetadata",
+    "WorkspaceRange",
+    "WorkspaceState",
 ]
