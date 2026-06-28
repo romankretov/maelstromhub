@@ -298,6 +298,7 @@ class StrategyParameterValue(StrEnum):
 
 
 StrategyParameters = dict[str, int | float | str | bool | None]
+StrategyParameterGrid = dict[str, list[int | float | str | bool | None]]
 
 
 class StrategyTemplate(DomainModel):
@@ -457,6 +458,15 @@ class WorkspaceRunBacktestRequest(WorkspaceLoadMarketRequest):
     allowed_regimes: list[str] | None = None
 
 
+class WorkspaceOptimiseRequest(WorkspaceLoadMarketRequest):
+    template_id: UUID
+    parameter_grid: StrategyParameterGrid
+    starting_balance: float = 10_000.0
+    fee_bps: float = 5.0
+    slippage_bps: float = 2.0
+    allowed_regimes: list[str] | None = None
+
+
 class WorkspaceMarketMetadata(DomainModel):
     symbol: str
     provider: str = "hyperliquid"
@@ -496,6 +506,21 @@ class WorkspaceBacktestResult(DomainModel):
     evaluation: BacktestEvaluation
     signals_written: int
     total_signals: int
+
+
+class WorkspaceOptimisationCandidate(DomainModel):
+    rank: int
+    parameters: StrategyParameters
+    backtest: BacktestRun
+    evaluation: BacktestEvaluation
+    signals_written: int
+    total_signals: int
+
+
+class WorkspaceOptimisationResult(DomainModel):
+    workspace_state: WorkspaceState
+    total_combinations: int
+    results: list[WorkspaceOptimisationCandidate] = Field(default_factory=list)
 
 
 class PaperAccountStatus(StrEnum):

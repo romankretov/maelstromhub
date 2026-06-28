@@ -409,6 +409,15 @@ export type WorkspaceRunBacktestRequest = WorkspaceLoadMarketRequest & {
   allowed_regimes?: string[] | null;
 };
 
+export type WorkspaceOptimiseRequest = WorkspaceLoadMarketRequest & {
+  template_id: string;
+  parameter_grid: Record<string, StrategyParameterValue[]>;
+  starting_balance: number;
+  fee_bps: number;
+  slippage_bps: number;
+  allowed_regimes?: string[] | null;
+};
+
 export type WorkspaceMarketMetadata = {
   symbol: string;
   provider: string;
@@ -448,6 +457,21 @@ export type WorkspaceBacktestResult = {
   evaluation: BacktestEvaluation;
   signals_written: number;
   total_signals: number;
+};
+
+export type WorkspaceOptimisationCandidate = {
+  rank: number;
+  parameters: Record<string, StrategyParameterValue>;
+  backtest: BacktestRun;
+  evaluation: BacktestEvaluation;
+  signals_written: number;
+  total_signals: number;
+};
+
+export type WorkspaceOptimisationResult = {
+  workspace_state: WorkspaceState;
+  total_combinations: number;
+  results: WorkspaceOptimisationCandidate[];
 };
 
 export type FeatureCreate = {
@@ -594,6 +618,13 @@ export async function runWorkspaceBacktest(
   payload: WorkspaceRunBacktestRequest,
 ): Promise<WorkspaceBacktestResult> {
   return request<WorkspaceBacktestResult>("/workspace/run-backtest", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function optimiseWorkspace(payload: WorkspaceOptimiseRequest): Promise<WorkspaceOptimisationResult> {
+  return request<WorkspaceOptimisationResult>("/workspace/optimise", {
     method: "POST",
     body: JSON.stringify(payload),
   });

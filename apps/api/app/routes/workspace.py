@@ -9,6 +9,8 @@ from maelstromhub_core import (
     WorkspaceBacktestResult,
     WorkspaceLoadMarketRequest,
     WorkspaceRange,
+    WorkspaceOptimisationResult,
+    WorkspaceOptimiseRequest,
     WorkspaceRunBacktestRequest,
     WorkspaceState,
 )
@@ -30,6 +32,14 @@ async def post_run_backtest(
     session: SessionDependency,
 ) -> WorkspaceBacktestResult:
     return await workspace_service.run_backtest(session, payload)
+
+
+@router.post("/optimise")
+async def post_optimise(
+    payload: WorkspaceOptimiseRequest,
+    session: SessionDependency,
+) -> WorkspaceOptimisationResult:
+    return await workspace_service.optimise(session, payload)
 
 
 @router.get("/state")

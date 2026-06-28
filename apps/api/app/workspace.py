@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from itertools import product
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -34,8 +35,10 @@ from app.db.strategy_repositories import (
 from app.market_intelligence import RegimeService
 from maelstromhub_core import (
     Asset,
+    BacktestEvaluation,
     BacktestRun,
     BacktestRunCreate,
+    BacktestRunDetail,
     Candle,
     CandleBackfillRequest,
     Dataset,
@@ -48,6 +51,9 @@ from maelstromhub_core import (
     WorkspaceDataHealth,
     WorkspaceLoadMarketRequest,
     WorkspaceMarketMetadata,
+    WorkspaceOptimisationCandidate,
+    WorkspaceOptimisationResult,
+    WorkspaceOptimiseRequest,
     WorkspaceRange,
     WorkspaceRunBacktestRequest,
     WorkspaceState,
@@ -60,6 +66,7 @@ RANGE_DAYS = {
     WorkspaceRange.DAYS_180: 180,
     WorkspaceRange.YEAR_1: 365,
 }
+MAX_OPTIMISATION_COMBINATIONS = 50
 
 
 class WorkspaceService:
@@ -170,6 +177,101 @@ class WorkspaceService:
         session: AsyncSession,
         payload: WorkspaceRunBacktestRequest,
     ) -> WorkspaceBacktestResult:
+        symbol, timeframe, dataset = await self._prepare_backtest_market(session, payload)
+        strategy = await self._get_or_create_workspace_strategy(
+            session,
+            symbol=symbol,
+            timeframe=timeframe.interval,
+            template_id=payload.template_id,
+        )
+        backtest, evaluation, signals_written, total_signals = await self._run_strategy_backtest(
+            session,
+            strategy_id=strategy.id,
+            dataset_id=dataset.id,
+            template_id=payload.template_id,
+            parameters=payload.parameters,
+            starting_balance=payload.starting_balance,
+            fee_bps=payload.fee_bps,
+            slippage_bps=payload.slippage_bps,
+            allowed_regimes=payload.allowed_regimes,
+        )
+
+        return WorkspaceBacktestResult(
+            workspace_state=await self.state(
+                session,
+                symbol=symbol,
+                timeframe=timeframe.interval,
+                range_value=payload.range,
+            ),
+            backtest=backtest,
+            evaluation=evaluation,
+            signals_written=signals_written,
+            total_signals=total_signals,
+        )
+
+    async def optimise(
+        self,
+        session: AsyncSession,
+        payload: WorkspaceOptimiseRequest,
+    ) -> WorkspaceOptimisationResult:
+        combinations = _parameter_combinations(payload.parameter_grid)
+        symbol, timeframe, dataset = await self._prepare_backtest_market(session, payload)
+        strategy = await self._get_or_create_workspace_strategy(
+            session,
+            symbol=symbol,
+            timeframe=timeframe.interval,
+            template_id=payload.template_id,
+        )
+        candidates: list[WorkspaceOptimisationCandidate] = []
+        for parameters in combinations:
+            backtest, evaluation, signals_written, total_signals = await self._run_strategy_backtest(
+                session,
+                strategy_id=strategy.id,
+                dataset_id=dataset.id,
+                template_id=payload.template_id,
+                parameters=parameters,
+                starting_balance=payload.starting_balance,
+                fee_bps=payload.fee_bps,
+                slippage_bps=payload.slippage_bps,
+                allowed_regimes=payload.allowed_regimes,
+            )
+            candidates.append(
+                WorkspaceOptimisationCandidate(
+                    rank=0,
+                    parameters=parameters,
+                    backtest=BacktestRun.model_validate(backtest),
+                    evaluation=evaluation,
+                    signals_written=signals_written,
+                    total_signals=total_signals,
+                )
+            )
+
+        ranked = sorted(
+            candidates,
+            key=lambda candidate: (
+                candidate.evaluation.risk_adjusted_score,
+                _metric_value(candidate.backtest.metrics, "total_return"),
+                _metric_value(candidate.backtest.metrics, "max_drawdown"),
+            ),
+            reverse=True,
+        )
+        ranked = [candidate.model_copy(update={"rank": index + 1}) for index, candidate in enumerate(ranked)]
+        return WorkspaceOptimisationResult(
+            workspace_state=await self.state(
+                session,
+                symbol=symbol,
+                timeframe=timeframe.interval,
+                range_value=payload.range,
+            ),
+            total_combinations=len(combinations),
+            results=ranked,
+        )
+
+    async def _prepare_backtest_market(
+        self,
+        session: AsyncSession,
+        payload: WorkspaceLoadMarketRequest,
+    ) -> tuple[str, TimeframeORM, Dataset]:
         symbol = _normalize_symbol(payload.symbol)
         _, timeframe, dataset = await self._resolve_market_dataset(
             session,
@@ -209,20 +311,29 @@ class WorkspaceService:
         if current_regime is None:
             await self.regime_service.compute_regimes(session, dataset.id)
 
-        strategy = await self._get_or_create_workspace_strategy(
-            session,
-            symbol=symbol,
-            timeframe=timeframe.interval,
-            template_id=payload.template_id,
-        )
+        return symbol, timeframe, dataset
+
+    async def _run_strategy_backtest(
+        self,
+        session: AsyncSession,
+        *,
+        strategy_id: UUID,
+        dataset_id: UUID,
+        template_id: UUID,
+        parameters: dict[str, int | float | str | bool | None],
+        starting_balance: float,
+        fee_bps: float,
+        slippage_bps: float,
+        allowed_regimes: list[str] | None,
+    ) -> tuple[BacktestRunDetail, BacktestEvaluation, int, int]:
         version = await create_strategy_version(
             session,
-            strategy.id,
+            strategy_id,
             StrategyVersionCreate(
-                template_id=payload.template_id,
-                dataset_id=dataset.id,
-                parameters=payload.parameters,
-                allowed_regimes=payload.allowed_regimes,
+                template_id=template_id,
+                dataset_id=dataset_id,
+                parameters=parameters,
+                allowed_regimes=allowed_regimes,
             ),
         )
         signals = await run_strategy_version_signals(session, version.id)
@@ -230,27 +341,16 @@ class WorkspaceService:
             session,
             version.id,
             BacktestRunCreate(
-                starting_balance=payload.starting_balance,
-                fee_bps=payload.fee_bps,
-                slippage_bps=payload.slippage_bps,
+                starting_balance=starting_balance,
+                fee_bps=fee_bps,
+                slippage_bps=slippage_bps,
             ),
         )
         run_orm = await session.get(BacktestRunORM, backtest.id)
         if run_orm is None:
             raise HTTPException(status_code=500, detail="Backtest completed but the run record could not be loaded.")
 
-        return WorkspaceBacktestResult(
-            workspace_state=await self.state(
-                session,
-                symbol=symbol,
-                timeframe=timeframe.interval,
-                range_value=payload.range,
-            ),
-            backtest=backtest,
-            evaluation=_evaluate_backtest_run(run_orm),
-            signals_written=signals.signals_written,
-            total_signals=signals.total_signals,
-        )
+        return backtest, _evaluate_backtest_run(run_orm), signals.signals_written, signals.total_signals
 
     async def _resolve_market_dataset(
         self,
@@ -454,3 +554,49 @@ def _normalize_symbol(symbol: str) -> str:
 
 def _range_start(range_value: WorkspaceRange) -> datetime:
     return datetime.now(UTC) - timedelta(days=RANGE_DAYS[range_value])
+
+
+def _parameter_combinations(
+    parameter_grid: dict[str, list[int | float | str | bool | None]],
+) -> list[dict[str, int | float | str | bool | None]]:
+    if not parameter_grid:
+        raise HTTPException(status_code=400, detail="parameter_grid must contain at least one parameter.")
+    keys = list(parameter_grid)
+    values = [parameter_grid[key] for key in keys]
+    if any(len(items) == 0 for items in values):
+        raise HTTPException(status_code=400, detail="Each parameter grid entry must contain at least one value.")
+
+    combinations = [dict(zip(keys, items, strict=True)) for items in product(*values)]
+    combinations = _filter_parameter_combinations(combinations)
+    if not combinations:
+        raise HTTPException(status_code=400, detail="No valid parameter combinations were produced.")
+    if len(combinations) > MAX_OPTIMISATION_COMBINATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Optimisation is limited to {MAX_OPTIMISATION_COMBINATIONS} parameter combinations.",
+        )
+    return combinations
+
+
+def _filter_parameter_combinations(
+    combinations: list[dict[str, int | float | str | bool | None]],
+) -> list[dict[str, int | float | str | bool | None]]:
+    filtered: list[dict[str, int | float | str | bool | None]] = []
+    for parameters in combinations:
+        fast = parameters.get("fast_window")
+        slow = parameters.get("slow_window")
+        if isinstance(fast, int | float) and isinstance(slow, int | float) and fast >= slow:
+            continue
+        oversold = parameters.get("oversold")
+        overbought = parameters.get("overbought")
+        if isinstance(oversold, int | float) and isinstance(overbought, int | float) and oversold >= overbought:
+            continue
+        filtered.append(parameters)
+    return filtered
+
+
+def _metric_value(metrics: dict[str, object], key: str) -> float:
+    value = metrics.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    return 0.0

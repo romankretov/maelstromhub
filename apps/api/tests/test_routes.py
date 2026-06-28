@@ -509,6 +509,107 @@ async def test_workspace_run_backtest_blocks_until_candles_exist(client: httpx.A
 
 
 @pytest.mark.anyio
+async def test_workspace_optimise_runs_ranked_backtests() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    async def override_get_session() -> AsyncIterator[AsyncSessionAdapter]:
+        with session_factory() as session:
+            yield AsyncSessionAdapter(session)
+
+    app.dependency_overrides[get_session] = override_get_session
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
+            load_response = await test_client.post(
+                "/workspace/load-market",
+                json={"symbol": "BTC", "timeframe": "1h", "range": "90d"},
+            )
+            dataset_id = UUID(load_response.json()["dataset_id"])
+            with session_factory() as sync_session:
+                start = datetime(2026, 1, 1, tzinfo=UTC)
+                for index in range(80):
+                    close = 100.0 + index
+                    sync_session.add(
+                        CandleORM(
+                            dataset_id=dataset_id,
+                            opened_at=start + timedelta(hours=index),
+                            open=close - 0.5,
+                            high=close + 1.0,
+                            low=close - 1.0,
+                            close=close,
+                            volume=1000.0 + index,
+                            trade_count=index + 1,
+                        )
+                    )
+                sync_session.commit()
+
+            state_response = await test_client.get("/workspace/state?symbol=BTC&timeframe=1h&range=90d")
+            template = next(
+                item
+                for item in state_response.json()["available_strategy_templates"]
+                if item["name"].lower().startswith("sma")
+            )
+            response = await test_client.post(
+                "/workspace/optimise",
+                json={
+                    "symbol": "BTC",
+                    "timeframe": "1h",
+                    "range": "90d",
+                    "template_id": template["id"],
+                    "parameter_grid": {"fast_window": [10, 20], "slow_window": [40, 60]},
+                    "starting_balance": 10000,
+                    "fee_bps": 5,
+                    "slippage_bps": 2,
+                    "allowed_regimes": None,
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["total_combinations"] == 4
+    assert [candidate["rank"] for candidate in body["results"]] == [1, 2, 3, 4]
+    assert all(candidate["backtest"]["status"] == "succeeded" for candidate in body["results"])
+    assert all(candidate["signals_written"] > 0 for candidate in body["results"])
+
+
+@pytest.mark.anyio
+async def test_workspace_optimise_rejects_more_than_fifty_combinations(client: httpx.AsyncClient) -> None:
+    load_response = await client.post(
+        "/workspace/load-market",
+        json={"symbol": "SOL", "timeframe": "1h", "range": "7d"},
+    )
+    template = load_response.json()["available_strategy_templates"][0]
+
+    response = await client.post(
+        "/workspace/optimise",
+        json={
+            "symbol": "SOL",
+            "timeframe": "1h",
+            "range": "7d",
+            "template_id": template["id"],
+            "parameter_grid": {"fast_window": list(range(1, 52)), "slow_window": [100]},
+            "starting_balance": 10000,
+            "fee_bps": 5,
+            "slippage_bps": 2,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "limited to 50 parameter combinations" in response.json()["detail"]
+
+
+@pytest.mark.anyio
 async def test_research_crud_chain(client: httpx.AsyncClient) -> None:
     asset, timeframe, dataset = await create_research_chain(client)
 

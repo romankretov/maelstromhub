@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -27,11 +27,13 @@ import { Button } from "@/components/ui/button";
 import {
   getWorkspaceState,
   loadWorkspaceMarket,
+  optimiseWorkspace,
   runWorkspaceBacktest,
   type Candle,
   type StrategyParameterValue,
   type StrategyTemplate,
   type WorkspaceBacktestResult,
+  type WorkspaceOptimisationResult,
   type WorkspaceRange,
   type WorkspaceState,
 } from "@/lib/api-client";
@@ -56,6 +58,7 @@ type Timeframe = (typeof timeframes)[number];
 type Range = (typeof ranges)[number];
 type Tab = (typeof tabs)[number];
 type WorkspaceStatus = "idle" | "loading" | "queued" | "running" | "ready" | "error";
+type OptimisationRange = { start: number; end: number; step: number };
 
 export function WorkspaceShell() {
   const [market, setMarket] = useState<Market>("BTC");
@@ -77,6 +80,16 @@ export function WorkspaceShell() {
   const [backtestResult, setBacktestResult] = useState<WorkspaceBacktestResult | null>(null);
   const [backtestStatus, setBacktestStatus] = useState<"idle" | "running" | "error">("idle");
   const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [optimisationRanges, setOptimisationRanges] = useState<Record<string, OptimisationRange>>({
+    fast_window: { start: 10, end: 30, step: 10 },
+    slow_window: { start: 40, end: 80, step: 20 },
+    rsi_period: { start: 14, end: 14, step: 1 },
+    oversold: { start: 25, end: 35, step: 5 },
+    overbought: { start: 65, end: 75, step: 5 },
+  });
+  const [optimisationResult, setOptimisationResult] = useState<WorkspaceOptimisationResult | null>(null);
+  const [optimisationStatus, setOptimisationStatus] = useState<"idle" | "running" | "error">("idle");
+  const [optimisationError, setOptimisationError] = useState<string | null>(null);
 
   const displayMarket = useMemo(() => {
     if (market !== "Manual") return market;
@@ -182,6 +195,35 @@ export function WorkspaceShell() {
     } catch (runError) {
       setBacktestStatus("error");
       setBacktestError(errorMessage(runError, "Unable to run workspace backtest."));
+    }
+  }
+
+  async function handleRunOptimisation() {
+    if (!displayMarket || !selectedTemplate) {
+      setOptimisationStatus("error");
+      setOptimisationError("Select a market and strategy template before running optimisation.");
+      return;
+    }
+    setOptimisationStatus("running");
+    setOptimisationError(null);
+    try {
+      const result = await optimiseWorkspace({
+        symbol: displayMarket,
+        timeframe,
+        range,
+        template_id: selectedTemplate.id,
+        parameter_grid: optimisationGridForTemplate(selectedTemplate, optimisationRanges),
+        starting_balance: startingBalance,
+        fee_bps: feeBps,
+        slippage_bps: slippageBps,
+        allowed_regimes: allowedRegimes.length > 0 ? allowedRegimes : null,
+      });
+      setOptimisationResult(result);
+      setState(result.workspace_state);
+      setOptimisationStatus("idle");
+    } catch (runError) {
+      setOptimisationStatus("error");
+      setOptimisationError(errorMessage(runError, "Unable to run workspace optimisation."));
     }
   }
 
@@ -362,6 +404,17 @@ export function WorkspaceShell() {
             backtestStatus={backtestStatus}
             backtestError={backtestError}
             onRunBacktest={handleRunBacktest}
+            optimisationRanges={optimisationRanges}
+            onOptimisationRangeChange={(key, field, value) =>
+              setOptimisationRanges((current) => ({
+                ...current,
+                [key]: { ...(current[key] ?? { start: 0, end: 0, step: 1 }), [field]: value },
+              }))
+            }
+            optimisationResult={optimisationResult}
+            optimisationStatus={optimisationStatus}
+            optimisationError={optimisationError}
+            onRunOptimisation={handleRunOptimisation}
           />
         </section>
       </div>
@@ -689,6 +742,12 @@ function BottomPanel({
   backtestStatus,
   backtestError,
   onRunBacktest,
+  optimisationRanges,
+  onOptimisationRangeChange,
+  optimisationResult,
+  optimisationStatus,
+  optimisationError,
+  onRunOptimisation,
 }: {
   activeTab: Tab;
   market: string;
@@ -713,6 +772,12 @@ function BottomPanel({
   backtestStatus: "idle" | "running" | "error";
   backtestError: string | null;
   onRunBacktest: () => void;
+  optimisationRanges: Record<string, OptimisationRange>;
+  onOptimisationRangeChange: (key: string, field: keyof OptimisationRange, value: number) => void;
+  optimisationResult: WorkspaceOptimisationResult | null;
+  optimisationStatus: "idle" | "running" | "error";
+  optimisationError: string | null;
+  onRunOptimisation: () => void;
 }) {
   if (activeTab === "Strategy") {
     const essentialKeys = selectedTemplate ? essentialParameterKeys(selectedTemplate) : [];
@@ -860,13 +925,52 @@ function BottomPanel({
   }
 
   if (activeTab === "Optimisation") {
+    const optimisationKeys = selectedTemplate ? optimisationKeysForTemplate(selectedTemplate) : [];
+    const canRun = Boolean(state?.dataset_id && selectedTemplate && state.candle_summary.total_candles > 0);
+    const best = optimisationResult?.results[0] ?? null;
     return (
-      <PanelGrid>
-        <PanelItem icon={SlidersHorizontal} label="Objective" value="Risk-adjusted score" />
-        <PanelItem icon={BarChart3} label="Grid Runs" value="0 queued" />
-        <PanelItem icon={TrendingUp} label="Best Candidate" value="Not available" />
-        <PanelItem icon={Play} label="Action" value="Backtest orchestration pending" />
-      </PanelGrid>
+      <div className="grid gap-4 p-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
+            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+            Parameter Ranges
+          </div>
+          <div className="mt-3 space-y-3">
+            {optimisationKeys.map((key) => (
+              <RangeInputRow
+                key={key}
+                paramKey={key}
+                value={optimisationRanges[key]}
+                onChange={onOptimisationRangeChange}
+              />
+            ))}
+          </div>
+          {optimisationStatus === "error" ? <p className="mt-3 text-sm text-red-300">{optimisationError}</p> : null}
+          <Button
+            type="button"
+            disabled={!canRun || optimisationStatus === "running"}
+            onClick={onRunOptimisation}
+            className="mt-4 h-10 w-full gap-2 border border-sky-500/30 bg-sky-500/10 text-sky-200 shadow-none hover:bg-sky-500/20"
+          >
+            {optimisationStatus === "running" ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Play className="h-4 w-4" aria-hidden="true" />
+            )}
+            Run Optimisation
+          </Button>
+        </section>
+
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <MetricBox label="Grid Runs" value={String(optimisationResult?.total_combinations ?? 0)} />
+            <MetricBox label="Best Return" value={metricPercent(best?.backtest.metrics["total_return"])} />
+            <MetricBox label="Best Drawdown" value={metricPercent(best?.backtest.metrics["max_drawdown"])} />
+            <MetricBox label="Best Score" value={metricNumber(best?.evaluation.risk_adjusted_score)} />
+          </div>
+          <OptimisationResultsTable result={optimisationResult} />
+        </section>
+      </div>
     );
   }
 
@@ -891,10 +995,6 @@ function BottomPanel({
       </div>
     </div>
   );
-}
-
-function PanelGrid({ children }: { children: ReactNode }) {
-  return <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">{children}</div>;
 }
 
 function ParameterInput({
@@ -941,11 +1041,78 @@ function SmallNumberInput({
   );
 }
 
+function RangeInputRow({
+  paramKey,
+  value,
+  onChange,
+}: {
+  paramKey: string;
+  value: OptimisationRange | undefined;
+  onChange: (key: string, field: keyof OptimisationRange, value: number) => void;
+}) {
+  const range = value ?? { start: 0, end: 0, step: 1 };
+  return (
+    <div className="rounded-md border border-zinc-800 bg-[#0d1017] p-3">
+      <p className="text-xs uppercase text-zinc-500">{formatParamLabel(paramKey)}</p>
+      <div className="mt-2 grid grid-cols-3 gap-2">
+        {(["start", "end", "step"] as const).map((field) => (
+          <label key={field} className="text-[11px] uppercase text-zinc-500">
+            {field}
+            <input
+              type="number"
+              value={range[field]}
+              onChange={(event) => onChange(paramKey, field, Number(event.target.value))}
+              className="mt-1 h-8 w-full rounded-md border border-zinc-700 bg-black px-2 text-xs text-zinc-100 outline-none"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MetricBox({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-zinc-800 bg-[#0d1017] p-3">
       <p className="text-[11px] uppercase text-zinc-500">{label}</p>
       <p className="mt-2 text-sm font-medium text-zinc-100">{value}</p>
+    </div>
+  );
+}
+
+function OptimisationResultsTable({ result }: { result: WorkspaceOptimisationResult | null }) {
+  const rows = result?.results.slice(0, 10) ?? [];
+  if (rows.length === 0) {
+    return <p className="mt-4 text-sm text-zinc-500">Run optimisation to rank parameter combinations.</p>;
+  }
+  return (
+    <div className="mt-4 overflow-auto rounded-md border border-zinc-800">
+      <table className="w-full text-left text-xs">
+        <thead className="bg-[#0d1017] text-zinc-500">
+          <tr>
+            <th className="px-3 py-2 font-medium">Rank</th>
+            <th className="px-3 py-2 font-medium">Parameters</th>
+            <th className="px-3 py-2 font-medium">Return</th>
+            <th className="px-3 py-2 font-medium">Drawdown</th>
+            <th className="px-3 py-2 font-medium">Trades</th>
+            <th className="px-3 py-2 font-medium">Score</th>
+            <th className="px-3 py-2 font-medium">Verdict</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-900 text-zinc-300">
+          {rows.map((candidate) => (
+            <tr key={candidate.backtest.id} className={candidate.rank === 1 ? "bg-emerald-400/5" : undefined}>
+              <td className="px-3 py-2 text-zinc-100">{candidate.rank}</td>
+              <td className="px-3 py-2">{formatParameters(candidate.parameters)}</td>
+              <td className="px-3 py-2">{metricPercent(candidate.backtest.metrics["total_return"])}</td>
+              <td className="px-3 py-2">{metricPercent(candidate.backtest.metrics["max_drawdown"])}</td>
+              <td className="px-3 py-2">{metricRaw(candidate.backtest.metrics["trade_count"]) ?? 0}</td>
+              <td className="px-3 py-2">{metricNumber(candidate.evaluation.risk_adjusted_score)}</td>
+              <td className="px-3 py-2">{candidate.evaluation.verdict}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1035,18 +1202,6 @@ function RegimePerformance({ metrics }: { metrics: Record<string, unknown> }) {
   );
 }
 
-function PanelItem({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-zinc-800 bg-black p-3">
-      <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
-        <Icon className="h-4 w-4" aria-hidden="true" />
-        {label}
-      </div>
-      <p className="mt-3 text-sm font-medium text-zinc-100">{value}</p>
-    </div>
-  );
-}
-
 type ChartStats = {
   latestPrice: number | null;
   periodReturn: number | null;
@@ -1120,8 +1275,45 @@ function essentialParameterKeys(template: StrategyTemplate) {
   return Object.keys(template.default_parameters);
 }
 
+function optimisationKeysForTemplate(template: StrategyTemplate) {
+  const name = template.name.toLowerCase();
+  if (name.includes("sma")) return ["fast_window", "slow_window"];
+  if (name.includes("rsi")) return ["rsi_period", "oversold", "overbought"];
+  return Object.keys(template.default_parameters);
+}
+
+function optimisationGridForTemplate(
+  template: StrategyTemplate,
+  ranges: Record<string, OptimisationRange>,
+) {
+  const grid: Record<string, StrategyParameterValue[]> = {};
+  for (const key of optimisationKeysForTemplate(template)) {
+    grid[key] = rangeValues(ranges[key]);
+  }
+  return grid;
+}
+
+function rangeValues(range: OptimisationRange | undefined) {
+  if (!range) return [0];
+  const step = Math.max(Math.abs(range.step), 1);
+  const start = Math.min(range.start, range.end);
+  const end = Math.max(range.start, range.end);
+  const values: number[] = [];
+  for (let value = start; value <= end; value += step) {
+    values.push(value);
+    if (values.length > 50) break;
+  }
+  return values;
+}
+
 function formatParamLabel(key: string) {
   return key.replaceAll("_", " ");
+}
+
+function formatParameters(parameters: Record<string, StrategyParameterValue>) {
+  return Object.entries(parameters)
+    .map(([key, value]) => `${formatParamLabel(key)}=${value ?? "--"}`)
+    .join(", ");
 }
 
 function metricRaw(value: unknown) {
