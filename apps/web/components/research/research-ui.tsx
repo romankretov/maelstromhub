@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Database, FlaskConical, Layers, Microscope, Plus, RefreshCw, Timer } from "lucide-react";
+import { ArrowRight, Database, FlaskConical, Gauge, Layers, Microscope, Plus, RefreshCw, Timer } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { ErrorState, FeedbackState, LoadingState } from "@/components/shell/feedback";
@@ -16,11 +16,14 @@ import {
   createTimeframe,
   backfillDatasetCandles,
   computeDatasetFeatures,
+  computeDatasetRegimes,
   getAssets,
   getDataset,
   getDatasetCandles,
+  getDatasetMarketIntelligence,
   getDatasetFeatureSummary,
   getDatasetIngestionJobs,
+  getDatasetRegimeSnapshots,
   getDatasets,
   getExperiments,
   getFeatures,
@@ -32,6 +35,7 @@ import {
   type Feature,
   type FeatureSummary,
   type IngestionJob,
+  type MarketRegimeSnapshot,
   type Timeframe,
 } from "@/lib/api-client";
 
@@ -91,12 +95,13 @@ export function ResearchOverviewClient() {
     { label: "Assets", value: assets.length, href: "/research/assets", icon: Database },
     { label: "Datasets", value: datasets.length, href: "/research/datasets", icon: Layers },
     { label: "Features", value: features.length, href: "/research/features", icon: Microscope },
+    { label: "Market Intelligence", value: datasets.length, href: "/research/market-intelligence", icon: Gauge },
     { label: "Experiments", value: experiments.length, href: "/research/experiments", icon: FlaskConical },
   ];
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-5">
         {stats.map((stat) => (
           <Link key={stat.label} href={stat.href} className="rounded-lg border bg-card p-5 transition-colors hover:bg-muted">
             <stat.icon className="h-5 w-5 text-primary" aria-hidden="true" />
@@ -122,6 +127,125 @@ export function ResearchOverviewClient() {
             <p className="mt-2 text-sm font-medium">{step}</p>
           </div>
         ))}
+      </section>
+    </div>
+  );
+}
+
+export function MarketIntelligenceClient() {
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState("");
+  const [currentRegime, setCurrentRegime] = useState<MarketRegimeSnapshot | null>(null);
+  const [regimeSnapshots, setRegimeSnapshots] = useState<MarketRegimeSnapshot[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadIntelligence = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const loadedDatasets = await getDatasets();
+      const datasetId = selectedDatasetId || loadedDatasets[0]?.id || "";
+      const [intelligence, snapshots] = datasetId
+        ? await Promise.all([getDatasetMarketIntelligence(datasetId), getDatasetRegimeSnapshots(datasetId)])
+        : [null, [] as MarketRegimeSnapshot[]];
+      setDatasets(loadedDatasets);
+      setSelectedDatasetId(datasetId);
+      setCurrentRegime(intelligence?.regime ?? null);
+      setRegimeSnapshots(snapshots);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load market intelligence.");
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedDatasetId]);
+
+  useEffect(() => {
+    void loadIntelligence();
+  }, [loadIntelligence]);
+
+  const counts = regimeSnapshots.reduce<Record<string, number>>((accumulator, snapshot) => {
+    accumulator[snapshot.regime_label] = (accumulator[snapshot.regime_label] ?? 0) + 1;
+    return accumulator;
+  }, {});
+
+  if (loading) return <LoadingState label="Loading market intelligence" />;
+  if (error) return <ErrorState message={error} />;
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg border bg-card p-5">
+        <label className="block text-sm font-medium" htmlFor="market-intelligence-dataset">
+          Dataset
+          <select
+            id="market-intelligence-dataset"
+            value={selectedDatasetId}
+            onChange={(event) => setSelectedDatasetId(event.target.value)}
+            className="mt-2 h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+          >
+            {datasets.map((dataset) => (
+              <option key={dataset.id} value={dataset.id}>
+                {dataset.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[360px_1fr]">
+        <section className="rounded-lg border bg-card p-5">
+          <h2 className="text-base font-semibold">Current regime</h2>
+          {currentRegime ? (
+            <>
+              <p className="mt-4 text-2xl font-semibold">{currentRegime.regime_label}</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Confidence {(currentRegime.confidence * 100).toFixed(0)}%
+              </p>
+              <p className="mt-4 text-sm leading-6 text-muted-foreground">{currentRegime.explanation}</p>
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">No regime snapshot is available.</p>
+          )}
+        </section>
+        <section className="rounded-lg border bg-card p-5">
+          <h2 className="text-base font-semibold">Counts</h2>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Object.entries(counts).map(([label, count]) => (
+              <div key={label} className="rounded-md border bg-background p-3">
+                <p className="text-sm font-medium">{label}</p>
+                <p className="mt-1 text-2xl font-semibold">{count}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </section>
+
+      <section className="rounded-lg border bg-card p-5">
+        <h2 className="text-base font-semibold">Historical regime timeline</h2>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b text-xs text-muted-foreground">
+              <tr>
+                <th className="py-2 pr-4 font-medium">Time</th>
+                <th className="py-2 pr-4 font-medium">Label</th>
+                <th className="py-2 pr-4 font-medium">Trend</th>
+                <th className="py-2 pr-4 font-medium">Volatility</th>
+                <th className="py-2 font-medium">Risk</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {regimeSnapshots.map((snapshot) => (
+                <tr key={snapshot.id}>
+                  <td className="py-3 pr-4 text-muted-foreground">{formatDate(snapshot.timestamp)}</td>
+                  <td className="py-3 pr-4 font-medium">{snapshot.regime_label}</td>
+                  <td className="py-3 pr-4 text-muted-foreground">{snapshot.trend_regime}</td>
+                  <td className="py-3 pr-4 text-muted-foreground">{snapshot.volatility_regime}</td>
+                  <td className="py-3 text-muted-foreground">{snapshot.risk_regime}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );
@@ -483,9 +607,11 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [featureSummary, setFeatureSummary] = useState<FeatureSummary | null>(null);
+  const [regimeSnapshots, setRegimeSnapshots] = useState<MarketRegimeSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
   const [computingFeatures, setComputingFeatures] = useState(false);
+  const [computingRegimes, setComputingRegimes] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -494,16 +620,18 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const [loadedDataset, loadedCandles, loadedJobs, loadedFeatureSummary] = await Promise.all([
+      const [loadedDataset, loadedCandles, loadedJobs, loadedFeatureSummary, loadedRegimes] = await Promise.all([
         getDataset(datasetId),
         getDatasetCandles(datasetId),
         getDatasetIngestionJobs(datasetId),
         getDatasetFeatureSummary(datasetId),
+        getDatasetRegimeSnapshots(datasetId),
       ]);
       setDataset(loadedDataset);
       setCandles(loadedCandles);
       setJobs(loadedJobs);
       setFeatureSummary(loadedFeatureSummary);
+      setRegimeSnapshots(loadedRegimes);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load dataset.");
     } finally {
@@ -553,6 +681,21 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
     }
   }
 
+  async function handleComputeRegimes() {
+    setComputingRegimes(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await computeDatasetRegimes(datasetId);
+      setRegimeSnapshots(await getDatasetRegimeSnapshots(datasetId));
+      setNotice(`Regime snapshots computed: ${result.snapshots_written}.`);
+    } catch (computeError) {
+      setError(computeError instanceof Error ? computeError.message : "Unable to compute regimes.");
+    } finally {
+      setComputingRegimes(false);
+    }
+  }
+
   async function handleRefresh() {
     setRefreshing(true);
     try {
@@ -583,7 +726,7 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
         <MetricCard label="Candles" value={dataset.candle_count.toString()} />
         <MetricCard label="Features" value={(featureSummary?.total_snapshots ?? 0).toString()} />
         <MetricCard label="Latest feature" value={featureSummary?.latest_timestamp ? formatDate(featureSummary.latest_timestamp) : "none"} />
-        <MetricCard label="Ingestion" value={dataset.last_ingestion_status ?? "not started"} />
+        <MetricCard label="Regime" value={regimeSnapshots[0]?.regime_label ?? "none"} />
       </section>
 
       <section className="rounded-lg border bg-card p-5">
@@ -606,8 +749,64 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
             <Button onClick={handleComputeFeatures} disabled={computingFeatures || candles.length === 0}>
               {computingFeatures ? "Queueing" : "Compute features"}
             </Button>
+            <Button onClick={handleComputeRegimes} disabled={computingRegimes || (featureSummary?.total_snapshots ?? 0) === 0}>
+              <Gauge className="mr-2 h-4 w-4" aria-hidden="true" />
+              {computingRegimes ? "Computing" : "Compute Regimes"}
+            </Button>
           </div>
         </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[360px_1fr]">
+        <section className="rounded-lg border bg-card p-5">
+          <h2 className="text-base font-semibold">Current Regime</h2>
+          {regimeSnapshots[0] ? (
+            <>
+              <p className="mt-4 text-2xl font-semibold">{regimeSnapshots[0].regime_label}</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Confidence {(regimeSnapshots[0].confidence * 100).toFixed(0)}%
+              </p>
+              <p className="mt-4 text-sm leading-6 text-muted-foreground">{regimeSnapshots[0].explanation}</p>
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">No regime snapshots computed yet.</p>
+          )}
+        </section>
+
+        <section className="rounded-lg border bg-card p-5">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <h2 className="text-base font-semibold">Regime history</h2>
+            <p className="text-sm text-muted-foreground">{regimeSnapshots.length} snapshots</p>
+          </div>
+          {regimeSnapshots.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Compute regimes after feature snapshots exist.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b text-xs text-muted-foreground">
+                  <tr>
+                    <th className="py-2 pr-4 font-medium">Time</th>
+                    <th className="py-2 pr-4 font-medium">Regime</th>
+                    <th className="py-2 pr-4 font-medium">Confidence</th>
+                    <th className="py-2 font-medium">Explanation</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {regimeSnapshots.slice(0, 12).map((snapshot) => (
+                    <tr key={snapshot.id}>
+                      <td className="py-3 pr-4 text-muted-foreground">{formatDate(snapshot.timestamp)}</td>
+                      <td className="py-3 pr-4 font-medium">{snapshot.regime_label}</td>
+                      <td className="py-3 pr-4 text-muted-foreground">
+                        {(snapshot.confidence * 100).toFixed(0)}%
+                      </td>
+                      <td className="py-3 text-muted-foreground">{snapshot.explanation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </section>
 
       <section className="rounded-lg border bg-card p-5">

@@ -12,6 +12,7 @@ from app.db.models import (
     BacktestRunORM,
     DatasetORM,
     FeatureSnapshotORM,
+    MarketRegimeSnapshotORM,
     SignalORM,
     StrategyORM,
     StrategyTemplateORM,
@@ -114,6 +115,7 @@ async def create_strategy_version(
         dataset_id=payload.dataset_id,
         version_number=next_number,
         parameters=parameters,
+        allowed_regimes=payload.allowed_regimes,
     )
     session.add(version)
     await session.flush()
@@ -166,6 +168,17 @@ async def run_strategy_version_signals(session: AsyncSession, version_id: str) -
         parameters=version.parameters,
         snapshots=snapshots,
     )
+    if version.allowed_regimes:
+        regimes = await _load_regimes_by_timestamp(session, dataset.id)
+        generated = _apply_regime_filter(generated, version.allowed_regimes, regimes)
+        if any(signal.metadata.get("skipped") is True for signal in generated):
+            await create_audit_event(
+                session,
+                actor="system",
+                action="blocked_strategy_by_regime",
+                subject=version.id,
+                flush=False,
+            )
     written = await _upsert_signals(
         session,
         version=version,
@@ -242,6 +255,49 @@ async def _load_aligned_snapshots(
         for timestamp, values in sorted(by_timestamp.items())
         if all(feature_name in values for feature_name in required_features)
     ]
+
+
+async def _load_regimes_by_timestamp(session: AsyncSession, dataset_id: str) -> dict[datetime, MarketRegimeSnapshotORM]:
+    result = await session.execute(
+        select(MarketRegimeSnapshotORM)
+        .where(MarketRegimeSnapshotORM.dataset_id == dataset_id)
+        .order_by(MarketRegimeSnapshotORM.timestamp.asc())
+    )
+    return {snapshot.timestamp.astimezone(UTC): snapshot for snapshot in result.scalars()}
+
+
+def _apply_regime_filter(
+    generated_signals: list[GeneratedSignal],
+    allowed_regimes: list[str],
+    regimes: dict[datetime, MarketRegimeSnapshotORM],
+) -> list[GeneratedSignal]:
+    allowed = set(allowed_regimes)
+    filtered: list[GeneratedSignal] = []
+    for generated in generated_signals:
+        regime = regimes.get(generated.timestamp.astimezone(UTC))
+        if regime is None or regime.regime_label in allowed:
+            metadata = {**generated.metadata}
+            if regime is not None:
+                metadata["regime_label"] = regime.regime_label
+            filtered.append(GeneratedSignal(**{**generated.__dict__, "metadata": metadata}))
+            continue
+        filtered.append(
+            GeneratedSignal(
+                timestamp=generated.timestamp,
+                side=SignalSide.FLAT,
+                confidence=0.0,
+                reason=f"Blocked by regime filter. Current regime {regime.regime_label} is not allowed.",
+                suggested_size=0.0,
+                metadata={
+                    **generated.metadata,
+                    "skipped": True,
+                    "skip_reason": "Blocked by regime filter.",
+                    "regime_label": regime.regime_label,
+                    "original_side": generated.side.value,
+                },
+            )
+        )
+    return filtered
 
 
 def _run_template(

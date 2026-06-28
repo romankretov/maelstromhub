@@ -20,7 +20,7 @@ from app.db.research_repositories import (
     list_dataset_candles,
     run_ingestion_job,
 )
-from app.db.models import BacktestRunORM, CandleORM, FeatureSnapshotORM, SignalORM, StrategyORM
+from app.db.models import BacktestRunORM, CandleORM, FeatureSnapshotORM, MarketRegimeSnapshotORM, SignalORM, StrategyORM
 from app.db.repositories import create_strategy
 from app.db.session import get_session
 from app.db.strategy_repositories import (
@@ -29,12 +29,14 @@ from app.db.strategy_repositories import (
     run_strategy_version_signals,
 )
 from app.main import app
+from app.market_intelligence.engine import RegimeEngine
 from app.providers.candles import ProviderCandle
 from maelstromhub_core import (
     AssetCreate,
     CandleBackfillRequest,
     DatasetCreate,
     FeatureComputeRequest,
+    TrendRegime,
     StrategyCreate,
     StrategyVersionCreate,
     TimeframeCreate,
@@ -1045,3 +1047,160 @@ async def test_paper_trading_steps_long_flat_signals_and_tracks_pnl() -> None:
         "started_paper_deployment",
         "executed_paper_step",
     }
+
+
+def test_regime_engine_classifies_deterministic_market_states() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    snapshots: list[tuple[Any, str, float]] = []
+    rows = [
+        {"returns_1": 0.01, "returns_5": 0.05, "sma_20": 120.0, "sma_50": 100.0, "volatility_20": 0.10, "rsi_14": 65.0, "atr_14": 1.0},
+        {"returns_1": -0.01, "returns_5": -0.05, "sma_20": 80.0, "sma_50": 100.0, "volatility_20": 0.20, "rsi_14": 35.0, "atr_14": 2.0},
+        {"returns_1": 0.0, "returns_5": 0.0, "sma_20": 100.0, "sma_50": 100.0, "volatility_20": 0.05, "rsi_14": 50.0, "atr_14": 0.5},
+        {"returns_1": -0.04, "returns_5": -0.12, "sma_20": 90.0, "sma_50": 100.0, "volatility_20": 0.80, "rsi_14": 20.0, "atr_14": 8.0},
+    ]
+    for index, values in enumerate(rows):
+        for feature_name, value in values.items():
+            snapshots.append((start + timedelta(hours=index), feature_name, value))
+
+    classifications = RegimeEngine().compute(snapshots)
+
+    assert [classification.trend_regime for classification in classifications[:3]] == [
+        TrendRegime.UPTREND,
+        TrendRegime.DOWNTREND,
+        TrendRegime.SIDEWAYS,
+    ]
+    assert classifications[0].regime_label.startswith("Bull")
+    assert classifications[3].volatility_regime == "HIGH"
+    assert classifications[3].risk_regime == "STRESSED"
+    assert "Volatility" in classifications[3].explanation
+
+
+@pytest.mark.anyio
+async def test_market_intelligence_api_computes_current_regime_and_audits() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        _, _, dataset = await _create_research_chain_in_session(session)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        rows = [
+            {"returns_1": -0.01, "returns_5": -0.02, "sma_20": 95.0, "sma_50": 100.0, "volatility_20": 0.25, "rsi_14": 40.0, "atr_14": 2.0},
+            {"returns_1": 0.0, "returns_5": 0.0, "sma_20": 100.0, "sma_50": 100.0, "volatility_20": 0.05, "rsi_14": 50.0, "atr_14": 0.5},
+            {"returns_1": 0.02, "returns_5": 0.08, "sma_20": 120.0, "sma_50": 100.0, "volatility_20": 0.10, "rsi_14": 65.0, "atr_14": 1.0},
+        ]
+        for index, values in enumerate(rows):
+            timestamp = start + timedelta(hours=index)
+            for feature_name, value in values.items():
+                session.add(
+                    FeatureSnapshotORM(
+                        id=f"regime-feature-{index}-{feature_name}",
+                        dataset_id=dataset.id,
+                        timestamp=timestamp,
+                        feature_name=feature_name,
+                        numeric_value=value,
+                        metadata_json={},
+                    )
+                )
+        await session.commit()
+
+    async def override_get_session() -> AsyncIterator[AsyncSessionAdapter]:
+        with session_factory() as session:
+            yield AsyncSessionAdapter(session)
+
+    app.dependency_overrides[get_session] = override_get_session
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
+        compute_response = await test_client.post(f"/datasets/{dataset.id}/compute-regimes")
+        current_response = await test_client.get(f"/datasets/{dataset.id}/current-regime")
+        intelligence_response = await test_client.get(f"/datasets/{dataset.id}/market-intelligence")
+        audit_response = await test_client.get("/audit-events")
+
+    app.dependency_overrides.clear()
+    engine.dispose()
+
+    assert compute_response.status_code == 200
+    assert compute_response.json()["snapshots_written"] == 3
+    assert current_response.json()["trend_regime"] == "UPTREND"
+    assert intelligence_response.json()["regime"]["regime_label"].startswith("Bull")
+    assert {event["action"] for event in audit_response.json()["audit_events"]} >= {
+        "started_regime_computation",
+        "completed_regime_computation",
+    }
+
+
+@pytest.mark.anyio
+async def test_strategy_signal_generation_stores_skipped_signal_when_regime_is_blocked() -> None:
+    from datetime import UTC, datetime
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        _, _, dataset = await _create_research_chain_in_session(session)
+        strategy = await create_strategy(
+            session,
+            StrategyCreate(name="Regime filtered strategy", description="Blocks disallowed market contexts."),
+        )
+        version = await create_strategy_version(
+            session,
+            strategy.id,
+            StrategyVersionCreate(
+                template_id="sma_crossover",
+                dataset_id=dataset.id,
+                allowed_regimes=["Bear Trend"],
+            ),
+        )
+        timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+        for feature_name, value in {"sma_20": 120.0, "sma_50": 100.0}.items():
+            session.add(
+                FeatureSnapshotORM(
+                    id=f"blocked-feature-{feature_name}",
+                    dataset_id=dataset.id,
+                    timestamp=timestamp,
+                    feature_name=feature_name,
+                    numeric_value=value,
+                    metadata_json={},
+                )
+            )
+        session.add(
+            MarketRegimeSnapshotORM(
+                id="market-regime-blocked",
+                dataset_id=dataset.id,
+                timestamp=timestamp,
+                trend_regime="UPTREND",
+                volatility_regime="NORMAL",
+                liquidity_regime="NORMAL",
+                risk_regime="NORMAL",
+                regime_label="Bull Trend",
+                confidence=0.9,
+                explanation="The market is trending upward with moderate volatility.",
+                metadata_json={},
+            )
+        )
+        await session.commit()
+
+        result = await run_strategy_version_signals(session, version.id)
+        signals = await list_strategy_version_signals(session, version.id)
+
+    engine.dispose()
+
+    assert result.signals_written == 1
+    assert signals[0].side == "flat"
+    assert signals[0].metadata["skipped"] is True
+    assert signals[0].metadata["skip_reason"] == "Blocked by regime filter."

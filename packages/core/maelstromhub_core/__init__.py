@@ -35,6 +35,9 @@ from maelstromhub_core.models import (
     IngestionJobType,
     Idea,
     IdeaCreate,
+    LiquidityRegime,
+    MarketIntelligence,
+    MarketRegimeSnapshot,
     PaperAccount,
     PaperAccountCreate,
     PaperAccountStatus,
@@ -46,6 +49,8 @@ from maelstromhub_core.models import (
     PaperTrade,
     ResearchRun,
     ResearchRunStatus,
+    RegimeComputationResult,
+    RiskRegime,
     Strategy,
     StrategyCreate,
     StrategyParameterValue,
@@ -60,6 +65,8 @@ from maelstromhub_core.models import (
     Timeframe,
     TimeframeCreate,
     TimeframeUpdate,
+    TrendRegime,
+    VolatilityRegime,
 )
 
 __all__ = [
@@ -99,6 +106,9 @@ __all__ = [
     "IngestionJobType",
     "Idea",
     "IdeaCreate",
+    "LiquidityRegime",
+    "MarketIntelligence",
+    "MarketRegimeSnapshot",
     "PaperAccount",
     "PaperAccountCreate",
     "PaperAccountStatus",
@@ -110,6 +120,8 @@ __all__ = [
     "PaperTrade",
     "ResearchRun",
     "ResearchRunStatus",
+    "RegimeComputationResult",
+    "RiskRegime",
     "Strategy",
     "StrategyCreate",
     "StrategyParameterValue",
@@ -124,4 +136,6 @@ __all__ = [
     "Timeframe",
     "TimeframeCreate",
     "TimeframeUpdate",
+    "TrendRegime",
+    "VolatilityRegime",
 ]

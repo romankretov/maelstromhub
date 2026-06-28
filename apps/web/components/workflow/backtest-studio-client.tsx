@@ -227,6 +227,7 @@ export function BacktestStudioClient() {
                 </div>
               </section>
               <BacktestComparison runs={runs} selectedRunId={selectedRun.id} onSelectRun={handleSelectRun} />
+              <PerformanceByRegime run={selectedRun} />
               <section className="rounded-lg border bg-card p-5">
                 <h2 className="text-base font-semibold">Equity curve</h2>
                 <EquityCurve snapshots={selectedRun.equity_curve} />
@@ -273,6 +274,53 @@ export function BacktestStudioClient() {
         </section>
       </section>
     </div>
+  );
+}
+
+function PerformanceByRegime({ run }: { run: BacktestRunDetail }) {
+  const pnlByRegime = objectMetric(run, "pnl_by_regime");
+  const tradeCountByRegime = objectMetric(run, "trade_count_by_regime");
+  const winRateByRegime = objectMetric(run, "win_rate_by_regime");
+  const coverage = objectMetric(run, "regime_coverage");
+  const labels = Array.from(
+    new Set([...Object.keys(pnlByRegime), ...Object.keys(tradeCountByRegime), ...Object.keys(winRateByRegime)]),
+  );
+
+  return (
+    <section className="rounded-lg border bg-card p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-base font-semibold">Performance by Regime</h2>
+        <span className="text-sm text-muted-foreground">
+          Coverage {formatPercent(numberValue(coverage.coverage_ratio))}
+        </span>
+      </div>
+      {labels.length === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">No completed trades could be mapped to regimes.</p>
+      ) : (
+        <div className="mt-4 overflow-x-auto rounded-md border">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-muted/50 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Regime</th>
+                <th className="px-3 py-2 font-medium">PnL</th>
+                <th className="px-3 py-2 font-medium">Trades</th>
+                <th className="px-3 py-2 font-medium">Win rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {labels.map((label) => (
+                <tr key={label} className="border-t">
+                  <td className="px-3 py-2 font-medium">{label}</td>
+                  <td className="px-3 py-2">{formatMoney(numberValue(pnlByRegime[label]))}</td>
+                  <td className="px-3 py-2">{numberValue(tradeCountByRegime[label])}</td>
+                  <td className="px-3 py-2">{formatPercent(numberValue(winRateByRegime[label]))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -446,6 +494,15 @@ function compareRuns(left: BacktestRun, right: BacktestRun) {
 
 function numberMetric(run: BacktestRun, key: string) {
   const value = run.metrics[key];
+  return typeof value === "number" ? value : 0;
+}
+
+function objectMetric(run: BacktestRun, key: string): Record<string, unknown> {
+  const value = run.metrics[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function numberValue(value: unknown) {
   return typeof value === "number" ? value : 0;
 }
 

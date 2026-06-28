@@ -9,6 +9,7 @@ import {
   createPaperAccount,
   createPaperDeployment,
   getDatasets,
+  getDatasetMarketIntelligence,
   getPaperDeployments,
   getPaperAccounts,
   getStrategies,
@@ -18,6 +19,7 @@ import {
   stopPaperDeployment,
   type PaperAccount,
   type PaperDeployment,
+  type MarketRegimeSnapshot,
   type Strategy,
   type StrategyVersion,
 } from "@/lib/api-client";
@@ -41,6 +43,7 @@ export function PaperTradingClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [currentRegime, setCurrentRegime] = useState<MarketRegimeSnapshot | null>(null);
 
   const selectedVersion = versions.find((version) => version.id === selectedVersionId);
   const selectedDeployment = deployments.find((deployment) => deployment.id === selectedDeploymentId) ?? null;
@@ -86,6 +89,23 @@ export function PaperTradingClient() {
   useEffect(() => {
     void loadWorkspace();
   }, []);
+
+  useEffect(() => {
+    if (!selectedDeployment) {
+      setCurrentRegime(null);
+      return;
+    }
+    const deployment = selectedDeployment;
+    async function loadRegime() {
+      try {
+        const intelligence = await getDatasetMarketIntelligence(deployment.dataset_id);
+        setCurrentRegime(intelligence.regime);
+      } catch {
+        setCurrentRegime(null);
+      }
+    }
+    void loadRegime();
+  }, [selectedDeployment]);
 
   async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -333,6 +353,10 @@ export function PaperTradingClient() {
 
           {selectedDeployment ? (
             <>
+              <PaperRegimePanel
+                regime={currentRegime}
+                version={versions.find((version) => version.id === selectedDeployment.strategy_version_id) ?? null}
+              />
               <PositionPanel deployment={selectedDeployment} />
               <TradesPanel deployment={selectedDeployment} />
             </>
@@ -340,6 +364,40 @@ export function PaperTradingClient() {
         </section>
       </section>
     </div>
+  );
+}
+
+function PaperRegimePanel({
+  regime,
+  version,
+}: {
+  regime: MarketRegimeSnapshot | null;
+  version: VersionOption | null;
+}) {
+  const allowedRegimes = version?.allowed_regimes ?? [];
+  const blocked = Boolean(regime && allowedRegimes.length > 0 && !allowedRegimes.includes(regime.regime_label));
+  return (
+    <section className="rounded-lg border bg-card p-5">
+      <h2 className="text-base font-semibold">Current regime</h2>
+      {regime ? (
+        <>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <p className="text-lg font-semibold">{regime.regime_label}</p>
+            <span className="rounded-md border px-2 py-1 text-sm text-muted-foreground">
+              {(regime.confidence * 100).toFixed(0)}%
+            </span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">{regime.explanation}</p>
+          {blocked ? (
+            <p className="mt-3 rounded-md border bg-background p-3 text-sm text-muted-foreground">
+              Strategy is paused for execution because {regime.regime_label} is not an allowed regime.
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="mt-3 text-sm text-muted-foreground">No current regime is available for this deployment.</p>
+      )}
+    </section>
   );
 }
 

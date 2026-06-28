@@ -132,6 +132,54 @@ class FeatureSummary(DomainModel):
     features: list[FeatureSummaryItem] = Field(default_factory=list)
 
 
+class TrendRegime(StrEnum):
+    UPTREND = "UPTREND"
+    DOWNTREND = "DOWNTREND"
+    SIDEWAYS = "SIDEWAYS"
+
+
+class VolatilityRegime(StrEnum):
+    LOW = "LOW"
+    NORMAL = "NORMAL"
+    HIGH = "HIGH"
+
+
+class LiquidityRegime(StrEnum):
+    NORMAL = "NORMAL"
+    THIN = "THIN"
+
+
+class RiskRegime(StrEnum):
+    NORMAL = "NORMAL"
+    STRESSED = "STRESSED"
+
+
+class MarketRegimeSnapshot(DomainModel):
+    id: str
+    dataset_id: str
+    timestamp: datetime
+    trend_regime: TrendRegime
+    volatility_regime: VolatilityRegime
+    liquidity_regime: LiquidityRegime
+    risk_regime: RiskRegime
+    regime_label: str
+    confidence: float
+    explanation: str
+    metadata: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RegimeComputationResult(DomainModel):
+    dataset_id: str
+    snapshots_written: int
+    current_regime: MarketRegimeSnapshot | None = None
+
+
+class MarketIntelligence(DomainModel):
+    dataset_id: str
+    regime: MarketRegimeSnapshot | None = None
+
+
 class IngestionJobStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -265,6 +313,7 @@ class StrategyVersionCreate(DomainModel):
     template_id: str
     dataset_id: str
     parameters: StrategyParameters = Field(default_factory=dict)
+    allowed_regimes: list[str] | None = None
 
 
 class StrategyVersion(StrategyVersionCreate):
@@ -353,7 +402,7 @@ class BacktestRun(DomainModel):
     slippage_bps: float
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
-    metrics: dict[str, float | int | str] = Field(default_factory=dict)
+    metrics: dict[str, object] = Field(default_factory=dict)
 
 
 class BacktestRunDetail(BacktestRun):

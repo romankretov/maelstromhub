@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     CandleORM,
+    MarketRegimeSnapshotORM,
     PaperAccountORM,
     PaperDeploymentORM,
     PaperPositionORM,
@@ -133,6 +134,24 @@ async def step_paper_deployment(session: AsyncSession, deployment_id: str) -> Pa
     close = float(candle.close)
     position = await _load_position(session, deployment.id)
     if signal is not None:
+        version = await _get_or_404(session, StrategyVersionORM, deployment.strategy_version_id)
+        regime = await _regime_at(session, deployment.dataset_id, timestamp)
+        if _is_blocked_by_regime(version.allowed_regimes, regime):
+            _mark_account(account, position, close)
+            deployment.last_processed_at = timestamp
+            await create_audit_event(
+                session,
+                actor="system",
+                action="skipped_paper_trade_by_regime",
+                subject=deployment.id,
+                flush=False,
+            )
+            await session.commit()
+            return PaperStepResult(
+                deployment=await get_paper_deployment(session, deployment.id),
+                advanced=True,
+                message=f"Skipped {timestamp.isoformat()}: blocked by regime filter.",
+            )
         side = SignalSide(signal.side)
         if side == SignalSide.LONG and position is None:
             await _open_long(session, deployment, account, signal, close)
@@ -205,6 +224,25 @@ async def _signal_at(session: AsyncSession, version_id: str, timestamp: datetime
         )
     )
     return result.scalar_one_or_none()
+
+
+async def _regime_at(session: AsyncSession, dataset_id: str, timestamp: datetime) -> MarketRegimeSnapshotORM | None:
+    result = await session.execute(
+        select(MarketRegimeSnapshotORM).where(
+            MarketRegimeSnapshotORM.dataset_id == dataset_id,
+            MarketRegimeSnapshotORM.timestamp == timestamp,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _is_blocked_by_regime(
+    allowed_regimes: list[str] | None,
+    regime: MarketRegimeSnapshotORM | None,
+) -> bool:
+    if not allowed_regimes or regime is None:
+        return False
+    return regime.regime_label not in set(allowed_regimes)
 
 
 async def _load_position(session: AsyncSession, deployment_id: str) -> PaperPositionORM | None:

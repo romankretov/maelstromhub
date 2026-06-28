@@ -114,6 +114,7 @@ class DatasetORM(Base):
     candles: Mapped[list["CandleORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     ingestion_jobs: Mapped[list["IngestionJobORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     feature_snapshots: Mapped[list["FeatureSnapshotORM"]] = relationship(back_populates="dataset", passive_deletes=True)
+    regime_snapshots: Mapped[list["MarketRegimeSnapshotORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     strategy_versions: Mapped[list["StrategyVersionORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     signals: Mapped[list["SignalORM"]] = relationship(back_populates="dataset", passive_deletes=True)
 
@@ -182,6 +183,30 @@ class FeatureSnapshotORM(Base):
     dataset: Mapped[DatasetORM] = relationship(back_populates="feature_snapshots")
 
 
+class MarketRegimeSnapshotORM(Base):
+    __tablename__ = "market_regime_snapshots"
+    __table_args__ = (UniqueConstraint("dataset_id", "timestamp", name="uq_market_regimes_dataset_timestamp"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trend_regime: Mapped[str] = mapped_column(String(40), nullable=False)
+    volatility_regime: Mapped[str] = mapped_column(String(40), nullable=False)
+    liquidity_regime: Mapped[str] = mapped_column(String(40), nullable=False)
+    risk_regime: Mapped[str] = mapped_column(String(40), nullable=False)
+    regime_label: Mapped[str] = mapped_column(String(120), nullable=False)
+    confidence: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    dataset: Mapped[DatasetORM] = relationship(back_populates="regime_snapshots")
+
+
 class StrategyTemplateORM(Base):
     __tablename__ = "strategy_templates"
 
@@ -210,6 +235,7 @@ class StrategyVersionORM(Base):
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    allowed_regimes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

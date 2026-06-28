@@ -11,6 +11,7 @@ from app.db.models import (
     BacktestTradeORM,
     CandleORM,
     EquityCurveSnapshotORM,
+    MarketRegimeSnapshotORM,
     SignalORM,
     StrategyVersionORM,
 )
@@ -105,6 +106,7 @@ async def get_backtest_run(session: AsyncSession, backtest_id: str) -> BacktestR
 async def _run_backtest(session: AsyncSession, run: BacktestRunORM, version: StrategyVersionORM) -> None:
     candles = await _load_candles(session, run.dataset_id)
     signals = await _load_signals_by_timestamp(session, version.id)
+    regimes = await _load_regimes_by_timestamp(session, run.dataset_id)
     cash = float(run.starting_balance)
     fee_rate = float(run.fee_bps) / 10_000
     slippage_rate = float(run.slippage_bps) / 10_000
@@ -163,6 +165,8 @@ async def _run_backtest(session: AsyncSession, run: BacktestRunORM, version: Str
         ending_equity=ending_equity,
         trades=trades,
         equity_snapshots=equity_snapshots,
+        candles=candles,
+        regimes=regimes,
     )
     await session.flush()
 
@@ -179,6 +183,15 @@ async def _load_signals_by_timestamp(session: AsyncSession, version_id: str) -> 
         select(SignalORM).where(SignalORM.strategy_version_id == version_id).order_by(SignalORM.timestamp.asc())
     )
     return {signal.timestamp.astimezone(UTC): signal for signal in result.scalars()}
+
+
+async def _load_regimes_by_timestamp(session: AsyncSession, dataset_id: str) -> dict[datetime, MarketRegimeSnapshotORM]:
+    result = await session.execute(
+        select(MarketRegimeSnapshotORM)
+        .where(MarketRegimeSnapshotORM.dataset_id == dataset_id)
+        .order_by(MarketRegimeSnapshotORM.timestamp.asc())
+    )
+    return {snapshot.timestamp.astimezone(UTC): snapshot for snapshot in result.scalars()}
 
 
 def _open_long(
@@ -249,17 +262,55 @@ def _calculate_metrics(
     ending_equity: float,
     trades: list[BacktestTradeORM],
     equity_snapshots: list[EquityCurveSnapshot],
-) -> dict[str, float | int]:
+    candles: list[CandleORM],
+    regimes: dict[datetime, MarketRegimeSnapshotORM],
+) -> dict[str, object]:
     wins = [float(trade.pnl) for trade in trades if float(trade.pnl) > 0]
     losses = [abs(float(trade.pnl)) for trade in trades if float(trade.pnl) < 0]
     gross_profit = sum(wins)
     gross_loss = sum(losses)
-    return {
+    metrics: dict[str, object] = {
         "total_return": 0.0 if starting_balance == 0 else (ending_equity - starting_balance) / starting_balance,
         "max_drawdown": min((snapshot.drawdown for snapshot in equity_snapshots), default=0.0),
         "win_rate": 0.0 if not trades else len(wins) / len(trades),
         "trade_count": len(trades),
         "profit_factor": gross_profit if gross_loss == 0 else gross_profit / gross_loss,
+    }
+    metrics.update(_regime_metrics(candles=candles, trades=trades, regimes=regimes))
+    return metrics
+
+
+def _regime_metrics(
+    *,
+    candles: list[CandleORM],
+    trades: list[BacktestTradeORM],
+    regimes: dict[datetime, MarketRegimeSnapshotORM],
+) -> dict[str, object]:
+    total_candles = len(candles)
+    covered_candles = sum(1 for candle in candles if candle.opened_at.astimezone(UTC) in regimes)
+    per_regime: dict[str, dict[str, float | int]] = {}
+    for trade in trades:
+        regime = regimes.get(trade.timestamp.astimezone(UTC))
+        label = regime.regime_label if regime is not None else "Unknown"
+        bucket = per_regime.setdefault(label, {"pnl": 0.0, "trade_count": 0, "wins": 0, "win_rate": 0.0})
+        pnl = float(trade.pnl)
+        bucket["pnl"] = float(bucket["pnl"]) + pnl
+        bucket["trade_count"] = int(bucket["trade_count"]) + 1
+        if pnl > 0:
+            bucket["wins"] = int(bucket["wins"]) + 1
+    for bucket in per_regime.values():
+        trade_count = int(bucket["trade_count"])
+        wins = int(bucket.pop("wins"))
+        bucket["win_rate"] = 0.0 if trade_count == 0 else wins / trade_count
+    return {
+        "regime_coverage": {
+            "covered_candles": covered_candles,
+            "total_candles": total_candles,
+            "coverage_ratio": 0.0 if total_candles == 0 else covered_candles / total_candles,
+        },
+        "pnl_by_regime": {label: bucket["pnl"] for label, bucket in per_regime.items()},
+        "trade_count_by_regime": {label: bucket["trade_count"] for label, bucket in per_regime.items()},
+        "win_rate_by_regime": {label: bucket["win_rate"] for label, bucket in per_regime.items()},
     }
 
 

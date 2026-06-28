@@ -38,6 +38,7 @@ from app.db.research_repositories import (
     update_timeframe,
 )
 from app.db.session import get_session
+from app.market_intelligence import RegimeService
 from maelstromhub_core import (
     Asset,
     AssetCreate,
@@ -57,12 +58,16 @@ from maelstromhub_core import (
     FeatureSummary,
     FeatureUpdate,
     IngestionJob,
+    MarketIntelligence,
+    MarketRegimeSnapshot,
+    RegimeComputationResult,
     Timeframe,
     TimeframeCreate,
     TimeframeUpdate,
 )
 
 router = APIRouter()
+regime_service = RegimeService()
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
 
@@ -160,6 +165,26 @@ async def get_dataset_feature_snapshots(dataset_id: str, session: SessionDepende
 @router.get("/datasets/{dataset_id}/feature-summary")
 async def get_dataset_feature_summary(dataset_id: str, session: SessionDependency) -> FeatureSummary:
     return await get_feature_summary(session, dataset_id)
+
+
+@router.post("/datasets/{dataset_id}/compute-regimes")
+async def post_dataset_compute_regimes(dataset_id: str, session: SessionDependency) -> RegimeComputationResult:
+    return await regime_service.compute_regimes(session, dataset_id)
+
+
+@router.get("/datasets/{dataset_id}/regime-snapshots")
+async def get_dataset_regime_snapshots(dataset_id: str, session: SessionDependency) -> dict[str, list[MarketRegimeSnapshot]]:
+    return {"regime_snapshots": await regime_service.list_snapshots(session, dataset_id)}
+
+
+@router.get("/datasets/{dataset_id}/current-regime")
+async def get_dataset_current_regime(dataset_id: str, session: SessionDependency) -> MarketRegimeSnapshot | None:
+    return await regime_service.current_regime(session, dataset_id)
+
+
+@router.get("/datasets/{dataset_id}/market-intelligence")
+async def get_dataset_market_intelligence(dataset_id: str, session: SessionDependency) -> MarketIntelligence:
+    return await regime_service.market_intelligence(session, dataset_id)
 
 
 @router.get("/datasets/{dataset_id}/ingestion-jobs")

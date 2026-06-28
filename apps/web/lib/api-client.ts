@@ -115,6 +115,7 @@ export type StrategyVersion = {
   dataset_id: string;
   version_number: number;
   parameters: Record<string, StrategyParameterValue>;
+  allowed_regimes: string[] | null;
   created_at: string;
 };
 
@@ -182,7 +183,7 @@ export type BacktestRun = {
   slippage_bps: number;
   created_at: string;
   finished_at: string | null;
-  metrics: Record<string, number | string>;
+  metrics: Record<string, unknown>;
 };
 
 export type BacktestRunDetail = BacktestRun & {
@@ -360,6 +361,37 @@ export type FeatureSummary = {
   features: FeatureSummaryItem[];
 };
 
+export type TrendRegime = "UPTREND" | "DOWNTREND" | "SIDEWAYS";
+export type VolatilityRegime = "LOW" | "NORMAL" | "HIGH";
+export type LiquidityRegime = "NORMAL" | "THIN";
+export type RiskRegime = "NORMAL" | "STRESSED";
+
+export type MarketRegimeSnapshot = {
+  id: string;
+  dataset_id: string;
+  timestamp: string;
+  trend_regime: TrendRegime;
+  volatility_regime: VolatilityRegime;
+  liquidity_regime: LiquidityRegime;
+  risk_regime: RiskRegime;
+  regime_label: string;
+  confidence: number;
+  explanation: string;
+  metadata: Record<string, string | number | boolean | null>;
+  created_at: string;
+};
+
+export type RegimeComputationResult = {
+  dataset_id: string;
+  snapshots_written: number;
+  current_regime: MarketRegimeSnapshot | null;
+};
+
+export type MarketIntelligence = {
+  dataset_id: string;
+  regime: MarketRegimeSnapshot | null;
+};
+
 export type FeatureCreate = {
   dataset_id: string;
   name: string;
@@ -380,6 +412,7 @@ export type StrategyVersionCreate = {
   template_id: string;
   dataset_id: string;
   parameters?: Record<string, StrategyParameterValue>;
+  allowed_regimes?: string[] | null;
 };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -606,6 +639,28 @@ export async function getDatasetFeatureSnapshots(datasetId: string): Promise<Fea
 
 export async function getDatasetFeatureSummary(datasetId: string): Promise<FeatureSummary> {
   return request<FeatureSummary>(`/datasets/${datasetId}/feature-summary`);
+}
+
+export async function computeDatasetRegimes(datasetId: string): Promise<RegimeComputationResult> {
+  return request<RegimeComputationResult>(`/datasets/${datasetId}/compute-regimes`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function getDatasetRegimeSnapshots(datasetId: string): Promise<MarketRegimeSnapshot[]> {
+  const body = await request<{ regime_snapshots: MarketRegimeSnapshot[] }>(
+    `/datasets/${datasetId}/regime-snapshots`,
+  );
+  return body.regime_snapshots;
+}
+
+export async function getDatasetCurrentRegime(datasetId: string): Promise<MarketRegimeSnapshot | null> {
+  return request<MarketRegimeSnapshot | null>(`/datasets/${datasetId}/current-regime`);
+}
+
+export async function getDatasetMarketIntelligence(datasetId: string): Promise<MarketIntelligence> {
+  return request<MarketIntelligence>(`/datasets/${datasetId}/market-intelligence`);
 }
 
 export async function getIngestionJob(jobId: string): Promise<IngestionJob> {

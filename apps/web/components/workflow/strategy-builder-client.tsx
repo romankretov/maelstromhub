@@ -25,6 +25,16 @@ import {
 } from "@/lib/api-client";
 import { strategyStatuses } from "@/lib/product-shell";
 
+const regimeOptions = [
+  "Bull Trend",
+  "Bear Trend",
+  "Range",
+  "Bull High Volatility",
+  "Bear High Volatility",
+  "Choppy High Volatility",
+  "Low Volatility Range",
+];
+
 export function StrategyBuilderClient() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -39,6 +49,7 @@ export function StrategyBuilderClient() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [allowedRegimes, setAllowedRegimes] = useState<string[]>([]);
   const [parameters, setParameters] = useState<Record<string, StrategyParameterValue>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -154,6 +165,7 @@ export function StrategyBuilderClient() {
         template_id: selectedTemplateId,
         dataset_id: selectedDatasetId,
         parameters,
+        allowed_regimes: allowedRegimes.length > 0 ? allowedRegimes : null,
       });
       setVersions((current) => [version, ...current]);
       setSelectedVersionId(version.id);
@@ -199,6 +211,12 @@ export function StrategyBuilderClient() {
       ...current,
       [key]: type === "number" ? Number(value) : value,
     }));
+  }
+
+  function toggleAllowedRegime(label: string) {
+    setAllowedRegimes((current) =>
+      current.includes(label) ? current.filter((item) => item !== label) : [...current, label],
+    );
   }
 
   return (
@@ -348,6 +366,22 @@ export function StrategyBuilderClient() {
                 </div>
               </div>
             ) : null}
+            <div className="mt-5 rounded-md border bg-background p-4">
+              <h3 className="text-sm font-semibold">Allowed regimes</h3>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {regimeOptions.map((label) => (
+                  <label key={label} className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={allowedRegimes.includes(label)}
+                      onChange={() => toggleAllowedRegime(label)}
+                      className="h-4 w-4 rounded border"
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
             <Button className="mt-5 gap-2" type="submit" disabled={creatingVersion}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               {creatingVersion ? "Creating version" : "Create strategy version"}

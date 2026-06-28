@@ -7,12 +7,15 @@ import { ErrorState, FeedbackState, LoadingState } from "@/components/shell/feed
 import { Button } from "@/components/ui/button";
 import {
   getAuditEvents,
+  getDatasetMarketIntelligence,
+  getDatasets,
   getStrategies,
   getStrategyVersionBacktests,
   getStrategyVersions,
   promoteStrategy,
   type AuditEvent,
   type BacktestRun,
+  type MarketRegimeSnapshot,
   type Strategy,
 } from "@/lib/api-client";
 import { safetyNotes, workflowSteps } from "@/lib/product-shell";
@@ -27,6 +30,7 @@ type StrategyDashboardItem = {
 export function DashboardClient() {
   const [strategyItems, setStrategyItems] = useState<StrategyDashboardItem[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [currentRegime, setCurrentRegime] = useState<MarketRegimeSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [promotingId, setPromotingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +40,14 @@ export function DashboardClient() {
     setLoading(true);
     setError(null);
     try {
-      const [loadedStrategies, loadedAuditEvents] = await Promise.all([getStrategies(), getAuditEvents()]);
+      const [loadedStrategies, loadedAuditEvents, loadedDatasets] = await Promise.all([
+        getStrategies(),
+        getAuditEvents(),
+        getDatasets(),
+      ]);
+      const regimeResults = await Promise.all(
+        loadedDatasets.slice(0, 5).map((dataset) => getDatasetMarketIntelligence(dataset.id)),
+      );
       const loadedItems = await Promise.all(
         loadedStrategies.map(async (strategy) => {
           const versions = await getStrategyVersions(strategy.id);
@@ -56,6 +67,7 @@ export function DashboardClient() {
       );
       setStrategyItems(loadedItems);
       setAuditEvents(loadedAuditEvents.slice(0, 5));
+      setCurrentRegime(regimeResults.find((item) => item.regime !== null)?.regime ?? null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load dashboard.");
     } finally {
@@ -103,6 +115,25 @@ export function DashboardClient() {
         <section className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">{notice}</section>
       ) : null}
       {loading ? <LoadingState label="Loading dashboard" /> : null}
+
+      {!loading ? (
+        <section className="rounded-lg border bg-card p-5">
+          <h2 className="text-base font-semibold">Current Market Regime</h2>
+          {currentRegime ? (
+            <>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <p className="text-2xl font-semibold">{currentRegime.regime_label}</p>
+                <span className="rounded-md border px-2 py-1 text-sm text-muted-foreground">
+                  {(currentRegime.confidence * 100).toFixed(0)}%
+                </span>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">{currentRegime.explanation}</p>
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">No market regime has been computed yet.</p>
+          )}
+        </section>
+      ) : null}
 
       {!loading ? (
         <section>
@@ -211,7 +242,7 @@ function getNextAction(
   versionCount: number,
 ) {
   if (strategy.status === "Backtested") {
-    return "Hold in Backtested. Paper Trading is not enabled yet.";
+    return "Start a Paper Trading deployment.";
   }
   if (strategy.status !== "Draft") {
     return "Review lifecycle status before taking the next step.";
