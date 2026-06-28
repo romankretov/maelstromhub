@@ -13,12 +13,15 @@ import {
   Loader2,
   NotebookText,
   Play,
+  Plus,
   RefreshCw,
+  Save,
   Search,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
   Terminal,
+  Trash2,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
@@ -26,13 +29,18 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   getWorkspaceState,
+  getWorkspaceNotes,
   loadWorkspaceMarket,
   optimiseWorkspace,
   runWorkspaceBacktest,
+  createWorkspaceNote,
+  deleteWorkspaceNote,
+  updateWorkspaceNote,
   type Candle,
   type StrategyParameterValue,
   type StrategyTemplate,
   type WorkspaceBacktestResult,
+  type WorkspaceNote,
   type WorkspaceOptimisationResult,
   type WorkspaceRange,
   type WorkspaceState,
@@ -90,6 +98,12 @@ export function WorkspaceShell() {
   const [optimisationResult, setOptimisationResult] = useState<WorkspaceOptimisationResult | null>(null);
   const [optimisationStatus, setOptimisationStatus] = useState<"idle" | "running" | "error">("idle");
   const [optimisationError, setOptimisationError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<WorkspaceNote[]>([]);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [noteTitle, setNoteTitle] = useState("Research note");
+  const [noteBody, setNoteBody] = useState(defaultNoteBody());
+  const [notesStatus, setNotesStatus] = useState<"idle" | "loading" | "saving" | "error">("idle");
+  const [notesError, setNotesError] = useState<string | null>(null);
 
   const displayMarket = useMemo(() => {
     if (market !== "Manual") return market;
@@ -147,6 +161,30 @@ export function WorkspaceShell() {
     }, 5000);
     return () => window.clearInterval(timer);
   }, [refreshState, state, status]);
+
+  useEffect(() => {
+    if (!displayMarket) return;
+    let cancelled = false;
+    setNotesStatus("loading");
+    getWorkspaceNotes({ symbol: displayMarket, timeframe })
+      .then((items) => {
+        if (cancelled) return;
+        setNotes(items);
+        setSelectedNoteId(items[0]?.id ?? null);
+        setNoteTitle(items[0]?.title ?? "Research note");
+        setNoteBody(items[0]?.body ?? defaultNoteBody());
+        setNotesStatus("idle");
+        setNotesError(null);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setNotesStatus("error");
+        setNotesError(errorMessage(loadError, "Unable to load workspace notes."));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayMarket, timeframe]);
 
   async function handleRefresh(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -224,6 +262,59 @@ export function WorkspaceShell() {
     } catch (runError) {
       setOptimisationStatus("error");
       setOptimisationError(errorMessage(runError, "Unable to run workspace optimisation."));
+    }
+  }
+
+  function handleSelectNote(note: WorkspaceNote) {
+    setSelectedNoteId(note.id);
+    setNoteTitle(note.title);
+    setNoteBody(note.body);
+    setNotesError(null);
+  }
+
+  function handleNewNote() {
+    setSelectedNoteId(null);
+    setNoteTitle("Research note");
+    setNoteBody(defaultNoteBody());
+    setNotesError(null);
+  }
+
+  async function handleSaveNote() {
+    if (!displayMarket) return;
+    setNotesStatus("saving");
+    setNotesError(null);
+    try {
+      const saved = selectedNoteId
+        ? await updateWorkspaceNote(selectedNoteId, { title: noteTitle, body: noteBody })
+        : await createWorkspaceNote({ symbol: displayMarket, timeframe, title: noteTitle, body: noteBody });
+      setSelectedNoteId(saved.id);
+      setNoteTitle(saved.title);
+      setNoteBody(saved.body);
+      setNotes((current) => [saved, ...current.filter((note) => note.id !== saved.id)]);
+      setNotesStatus("idle");
+    } catch (saveError) {
+      setNotesStatus("error");
+      setNotesError(errorMessage(saveError, "Unable to save workspace note."));
+    }
+  }
+
+  async function handleDeleteNote(noteId: string) {
+    setNotesStatus("saving");
+    setNotesError(null);
+    try {
+      await deleteWorkspaceNote(noteId);
+      setNotes((current) => {
+        const remaining = current.filter((note) => note.id !== noteId);
+        const next = remaining[0] ?? null;
+        setSelectedNoteId(next?.id ?? null);
+        setNoteTitle(next?.title ?? "Research note");
+        setNoteBody(next?.body ?? defaultNoteBody());
+        return remaining;
+      });
+      setNotesStatus("idle");
+    } catch (deleteError) {
+      setNotesStatus("error");
+      setNotesError(errorMessage(deleteError, "Unable to delete workspace note."));
     }
   }
 
@@ -415,6 +506,18 @@ export function WorkspaceShell() {
             optimisationStatus={optimisationStatus}
             optimisationError={optimisationError}
             onRunOptimisation={handleRunOptimisation}
+            notes={notes}
+            selectedNoteId={selectedNoteId}
+            noteTitle={noteTitle}
+            noteBody={noteBody}
+            notesStatus={notesStatus}
+            notesError={notesError}
+            onSelectNote={handleSelectNote}
+            onNewNote={handleNewNote}
+            onNoteTitleChange={setNoteTitle}
+            onNoteBodyChange={setNoteBody}
+            onSaveNote={handleSaveNote}
+            onDeleteNote={handleDeleteNote}
           />
         </section>
       </div>
@@ -748,6 +851,18 @@ function BottomPanel({
   optimisationStatus,
   optimisationError,
   onRunOptimisation,
+  notes,
+  selectedNoteId,
+  noteTitle,
+  noteBody,
+  notesStatus,
+  notesError,
+  onSelectNote,
+  onNewNote,
+  onNoteTitleChange,
+  onNoteBodyChange,
+  onSaveNote,
+  onDeleteNote,
 }: {
   activeTab: Tab;
   market: string;
@@ -778,6 +893,18 @@ function BottomPanel({
   optimisationStatus: "idle" | "running" | "error";
   optimisationError: string | null;
   onRunOptimisation: () => void;
+  notes: WorkspaceNote[];
+  selectedNoteId: string | null;
+  noteTitle: string;
+  noteBody: string;
+  notesStatus: "idle" | "loading" | "saving" | "error";
+  notesError: string | null;
+  onSelectNote: (note: WorkspaceNote) => void;
+  onNewNote: () => void;
+  onNoteTitleChange: (value: string) => void;
+  onNoteBodyChange: (value: string) => void;
+  onSaveNote: () => void;
+  onDeleteNote: (noteId: string) => void;
 }) {
   if (activeTab === "Strategy") {
     const essentialKeys = selectedTemplate ? essentialParameterKeys(selectedTemplate) : [];
@@ -976,11 +1103,95 @@ function BottomPanel({
 
   if (activeTab === "Notes") {
     return (
-      <div className="p-4">
-        <div className="rounded-md border border-zinc-800 bg-black p-4 text-sm leading-6 text-zinc-400">
-          Notes will capture research observations for the active workspace. Market data is now loaded through the
-          workspace API; strategy and backtest orchestration come later.
-        </div>
+      <div className="grid gap-4 p-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+        <section className="rounded-md border border-zinc-800 bg-black p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
+              <NotebookText className="h-4 w-4" aria-hidden="true" />
+              Notes
+            </div>
+            <button
+              type="button"
+              onClick={onNewNote}
+              className="flex h-8 w-8 items-center justify-center rounded border border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+              aria-label="New note"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="mt-3 max-h-64 space-y-2 overflow-auto pr-1">
+            {notes.length === 0 ? (
+              <p className="rounded-md border border-zinc-800 bg-[#0d1017] p-3 text-sm text-zinc-500">
+                No notes for {market} {timeframe}.
+              </p>
+            ) : (
+              notes.map((note) => (
+                <button
+                  key={note.id}
+                  type="button"
+                  onClick={() => onSelectNote(note)}
+                  className={cn(
+                    "w-full rounded-md border p-3 text-left text-sm transition-colors",
+                    selectedNoteId === note.id
+                      ? "border-emerald-400/40 bg-emerald-400/10"
+                      : "border-zinc-800 bg-[#0d1017] hover:border-zinc-700",
+                  )}
+                >
+                  <span className="block font-medium text-zinc-100">{note.title}</span>
+                  <span className="mt-1 block text-xs text-zinc-500">Updated {formatDateTime(note.updated_at)}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs uppercase text-zinc-500">
+              {market} {timeframe} / Markdown
+            </p>
+            <div className="flex items-center gap-2">
+              {selectedNoteId ? (
+                <button
+                  type="button"
+                  onClick={() => onDeleteNote(selectedNoteId)}
+                  disabled={notesStatus === "saving"}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                  aria-label="Delete note"
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </button>
+              ) : null}
+              <Button
+                type="button"
+                onClick={onSaveNote}
+                disabled={notesStatus === "saving"}
+                className="h-9 gap-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 shadow-none hover:bg-emerald-500/20"
+              >
+                {notesStatus === "saving" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Save className="h-4 w-4" aria-hidden="true" />
+                )}
+                Save
+              </Button>
+            </div>
+          </div>
+          <input
+            value={noteTitle}
+            onChange={(event) => onNoteTitleChange(event.target.value)}
+            className="mt-3 h-10 w-full rounded-md border border-zinc-700 bg-[#0d1017] px-3 text-sm font-medium text-zinc-100 outline-none"
+            placeholder="Note title"
+          />
+          <textarea
+            value={noteBody}
+            onChange={(event) => onNoteBodyChange(event.target.value)}
+            className="mt-3 min-h-64 w-full resize-y rounded-md border border-zinc-700 bg-[#050608] p-3 font-mono text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-600"
+            placeholder="Write markdown notes..."
+          />
+          {notesStatus === "loading" ? <p className="mt-2 text-sm text-zinc-500">Loading notes...</p> : null}
+          {notesStatus === "error" ? <p className="mt-2 text-sm text-red-300">{notesError}</p> : null}
+        </section>
       </div>
     );
   }
@@ -1314,6 +1525,10 @@ function formatParameters(parameters: Record<string, StrategyParameterValue>) {
   return Object.entries(parameters)
     .map(([key, value]) => `${formatParamLabel(key)}=${value ?? "--"}`)
     .join(", ");
+}
+
+function defaultNoteBody() {
+  return "## Hypothesis\n\n\n## Observations\n\n\n## Conclusion\n";
 }
 
 function metricRaw(value: unknown) {

@@ -15,6 +15,7 @@ from app.db.models import (
     StrategyORM,
     StrategyVersionORM,
     TimeframeORM,
+    WorkspaceNoteORM,
 )
 from app.db.backtest_repositories import create_backtest_run
 from app.db.repositories import _new_id, create_audit_event
@@ -51,6 +52,9 @@ from maelstromhub_core import (
     WorkspaceDataHealth,
     WorkspaceLoadMarketRequest,
     WorkspaceMarketMetadata,
+    WorkspaceNote,
+    WorkspaceNoteCreate,
+    WorkspaceNoteUpdate,
     WorkspaceOptimisationCandidate,
     WorkspaceOptimisationResult,
     WorkspaceOptimiseRequest,
@@ -266,6 +270,67 @@ class WorkspaceService:
             total_combinations=len(combinations),
             results=ranked,
         )
+
+    async def list_notes(
+        self,
+        session: AsyncSession,
+        *,
+        symbol: str,
+        timeframe: str,
+    ) -> list[WorkspaceNote]:
+        normalized_symbol = _normalize_symbol(symbol)
+        normalized_timeframe = _normalize_timeframe(timeframe)
+        result = await session.execute(
+            select(WorkspaceNoteORM)
+            .where(
+                WorkspaceNoteORM.symbol == normalized_symbol,
+                WorkspaceNoteORM.timeframe == normalized_timeframe,
+            )
+            .order_by(WorkspaceNoteORM.updated_at.desc(), WorkspaceNoteORM.created_at.desc())
+        )
+        return [WorkspaceNote.model_validate(note) for note in result.scalars()]
+
+    async def create_note(self, session: AsyncSession, payload: WorkspaceNoteCreate) -> WorkspaceNote:
+        note = WorkspaceNoteORM(
+            id=_new_id(),
+            symbol=_normalize_symbol(payload.symbol),
+            timeframe=_normalize_timeframe(payload.timeframe),
+            title=_normalize_note_title(payload.title),
+            body=payload.body,
+        )
+        session.add(note)
+        await session.flush()
+        await create_audit_event(session, actor="system", action="created_workspace_note", subject=note.id, flush=False)
+        await session.commit()
+        await session.refresh(note)
+        return WorkspaceNote.model_validate(note)
+
+    async def update_note(
+        self,
+        session: AsyncSession,
+        note_id: UUID,
+        payload: WorkspaceNoteUpdate,
+    ) -> WorkspaceNote:
+        note = await session.get(WorkspaceNoteORM, note_id)
+        if note is None:
+            raise HTTPException(status_code=404, detail="Workspace note not found")
+        if payload.title is not None:
+            note.title = _normalize_note_title(payload.title)
+        if payload.body is not None:
+            note.body = payload.body
+        note.updated_at = datetime.now(UTC)
+        await create_audit_event(session, actor="system", action="updated_workspace_note", subject=note.id, flush=False)
+        await session.commit()
+        await session.refresh(note)
+        return WorkspaceNote.model_validate(note)
+
+    async def delete_note(self, session: AsyncSession, note_id: UUID) -> None:
+        note = await session.get(WorkspaceNoteORM, note_id)
+        if note is None:
+            raise HTTPException(status_code=404, detail="Workspace note not found")
+        await session.delete(note)
+        await create_audit_event(session, actor="system", action="deleted_workspace_note", subject=note_id, flush=False)
+        await session.commit()
 
     async def _prepare_backtest_market(
         self,
@@ -549,6 +614,20 @@ def _normalize_symbol(symbol: str) -> str:
     normalized = symbol.strip().upper()
     if not normalized:
         raise HTTPException(status_code=400, detail="symbol is required")
+    return normalized
+
+
+def _normalize_timeframe(timeframe: str) -> str:
+    normalized = timeframe.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="timeframe is required")
+    return normalized
+
+
+def _normalize_note_title(title: str) -> str:
+    normalized = title.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="title is required")
     return normalized
 
 

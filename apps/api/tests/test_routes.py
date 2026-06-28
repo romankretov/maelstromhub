@@ -406,6 +406,36 @@ async def test_workspace_users_do_not_need_to_create_timeframes(client: httpx.As
 
 
 @pytest.mark.anyio
+async def test_workspace_notes_crud(client: httpx.AsyncClient) -> None:
+    create_response = await client.post(
+        "/workspace/notes",
+        json={
+            "symbol": "btc",
+            "timeframe": "1h",
+            "title": "Momentum hypothesis",
+            "body": "## Hypothesis\nBTC trend continues.\n\n## Observations\n\n## Conclusion\n",
+        },
+    )
+    note = create_response.json()
+    list_response = await client.get("/workspace/notes?symbol=BTC&timeframe=1h")
+    update_response = await client.patch(
+        f"/workspace/notes/{note['id']}",
+        json={"title": "Updated hypothesis", "body": "## Conclusion\nWait for confirmation."},
+    )
+    delete_response = await client.delete(f"/workspace/notes/{note['id']}")
+    empty_response = await client.get("/workspace/notes?symbol=BTC&timeframe=1h")
+
+    assert create_response.status_code == 201
+    assert UUID(note["id"])
+    assert note["symbol"] == "BTC"
+    assert note["timeframe"] == "1h"
+    assert list_response.json()["workspace_notes"][0]["id"] == note["id"]
+    assert update_response.json()["title"] == "Updated hypothesis"
+    assert delete_response.status_code == 204
+    assert empty_response.json() == {"workspace_notes": []}
+
+
+@pytest.mark.anyio
 async def test_workspace_run_backtest_orchestrates_strategy_signals_and_backtest() -> None:
     from datetime import UTC, datetime, timedelta
 

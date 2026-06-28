@@ -449,6 +449,24 @@ class WorkspaceLoadMarketRequest(DomainModel):
     range: WorkspaceRange
 
 
+class WorkspaceNoteCreate(DomainModel):
+    symbol: str
+    timeframe: str
+    title: str
+    body: str
+
+
+class WorkspaceNoteUpdate(DomainModel):
+    title: str | None = None
+    body: str | None = None
+
+
+class WorkspaceNote(WorkspaceNoteCreate):
+    id: UUID
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class WorkspaceRunBacktestRequest(WorkspaceLoadMarketRequest):
     template_id: UUID
     parameters: StrategyParameters = Field(default_factory=dict)

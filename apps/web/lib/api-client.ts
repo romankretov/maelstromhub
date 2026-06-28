@@ -400,6 +400,28 @@ export type WorkspaceLoadMarketRequest = {
   range: WorkspaceRange;
 };
 
+export type WorkspaceNote = {
+  id: string;
+  symbol: string;
+  timeframe: string;
+  title: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkspaceNoteCreate = {
+  symbol: string;
+  timeframe: string;
+  title: string;
+  body: string;
+};
+
+export type WorkspaceNoteUpdate = {
+  title?: string | null;
+  body?: string | null;
+};
+
 export type WorkspaceRunBacktestRequest = WorkspaceLoadMarketRequest & {
   template_id: string;
   parameters: Record<string, StrategyParameterValue>;
@@ -513,6 +535,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail || `Request failed with status ${response.status}`);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json() as Promise<T>;
 }
 
@@ -612,6 +638,35 @@ export async function getWorkspaceState(payload: WorkspaceLoadMarketRequest): Pr
     range: payload.range,
   });
   return request<WorkspaceState>(`/workspace/state?${params.toString()}`);
+}
+
+export async function getWorkspaceNotes(payload: Pick<WorkspaceLoadMarketRequest, "symbol" | "timeframe">): Promise<WorkspaceNote[]> {
+  const params = new URLSearchParams({
+    symbol: payload.symbol,
+    timeframe: payload.timeframe,
+  });
+  const body = await request<{ workspace_notes: WorkspaceNote[] }>(`/workspace/notes?${params.toString()}`);
+  return body.workspace_notes;
+}
+
+export async function createWorkspaceNote(payload: WorkspaceNoteCreate): Promise<WorkspaceNote> {
+  return request<WorkspaceNote>("/workspace/notes", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateWorkspaceNote(noteId: string, payload: WorkspaceNoteUpdate): Promise<WorkspaceNote> {
+  return request<WorkspaceNote>(`/workspace/notes/${noteId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteWorkspaceNote(noteId: string): Promise<void> {
+  await request<void>(`/workspace/notes/${noteId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function runWorkspaceBacktest(
