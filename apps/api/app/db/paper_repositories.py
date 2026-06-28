@@ -64,7 +64,7 @@ async def list_paper_accounts(session: AsyncSession) -> list[PaperAccount]:
 async def create_paper_deployment(session: AsyncSession, payload: PaperDeploymentCreate) -> PaperDeployment:
     strategy = await _get_or_404(session, StrategyORM, payload.strategy_id)
     if StrategyStatus(strategy.status) not in {StrategyStatus.BACKTESTED, StrategyStatus.PAPER_TRADING}:
-        raise HTTPException(status_code=400, detail="Only Backtested or Paper Trading strategies can be deployed.")
+        raise HTTPException(status_code=400, detail="Only Backtested or Paper Deploy strategies can be deployed.")
     version = await _get_or_404(session, StrategyVersionORM, payload.strategy_version_id)
     if version.strategy_id != strategy.id:
         raise HTTPException(status_code=400, detail="Strategy version does not belong to this strategy.")
@@ -109,7 +109,7 @@ async def step_paper_deployment(session: AsyncSession, deployment_id: UUID) -> P
         return PaperStepResult(
             deployment=await _deployment_to_schema(session, deployment),
             advanced=False,
-            message=f"Deployment is {deployment.status}. Resume is not implemented in Paper Trading v1.",
+            message=f"Deployment is {deployment.status}. Resume is not implemented in Paper Deploy v1.",
         )
     account = await _get_or_404(session, PaperAccountORM, deployment.paper_account_id)
     candle = await _next_candle(session, deployment)

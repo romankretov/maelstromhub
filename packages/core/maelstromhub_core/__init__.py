@@ -80,6 +80,7 @@ from maelstromhub_core.models import (
     WorkspaceOptimiseRequest,
     WorkspaceRange,
     WorkspaceRunBacktestRequest,
+    WorkspaceStartPaperDeployRequest,
     WorkspaceState,
 )
 
@@ -165,5 +166,6 @@ __all__ = [
     "WorkspaceOptimiseRequest",
     "WorkspaceRange",
     "WorkspaceRunBacktestRequest",
+    "WorkspaceStartPaperDeployRequest",
     "WorkspaceState",
 ]

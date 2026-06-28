@@ -7,15 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.workspace import WorkspaceService
 from maelstromhub_core import (
+    PaperDeployment,
     WorkspaceBacktestResult,
     WorkspaceLoadMarketRequest,
     WorkspaceNote,
     WorkspaceNoteCreate,
     WorkspaceNoteUpdate,
-    WorkspaceRange,
     WorkspaceOptimisationResult,
     WorkspaceOptimiseRequest,
+    WorkspaceRange,
     WorkspaceRunBacktestRequest,
+    WorkspaceStartPaperDeployRequest,
     WorkspaceState,
 )
 
@@ -69,6 +71,14 @@ async def patch_note(note_id: UUID, payload: WorkspaceNoteUpdate, session: Sessi
 async def delete_note(note_id: UUID, session: SessionDependency) -> Response:
     await workspace_service.delete_note(session, note_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/paper-deploy", status_code=201)
+async def post_paper_deploy(
+    payload: WorkspaceStartPaperDeployRequest,
+    session: SessionDependency,
+) -> PaperDeployment:
+    return await workspace_service.start_paper_deploy(session, payload)
 
 
 @router.get("/state")

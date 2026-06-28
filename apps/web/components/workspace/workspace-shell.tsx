@@ -12,6 +12,7 @@ import {
   ListFilter,
   Loader2,
   NotebookText,
+  Pause,
   Play,
   Plus,
   RefreshCw,
@@ -28,15 +29,24 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
+  createPaperAccount,
+  createWorkspaceNote,
+  deleteWorkspaceNote,
+  getPaperAccounts,
+  getPaperDeployments,
   getWorkspaceState,
   getWorkspaceNotes,
   loadWorkspaceMarket,
   optimiseWorkspace,
+  pausePaperDeployment,
   runWorkspaceBacktest,
-  createWorkspaceNote,
-  deleteWorkspaceNote,
+  startWorkspacePaperDeploy,
+  stepPaperDeployment,
+  stopPaperDeployment,
   updateWorkspaceNote,
   type Candle,
+  type PaperAccount,
+  type PaperDeployment,
   type StrategyParameterValue,
   type StrategyTemplate,
   type WorkspaceBacktestResult,
@@ -50,7 +60,7 @@ import { cn } from "@/lib/utils";
 const markets = ["BTC", "ETH", "SOL", "HYPE", "Manual"] as const;
 const timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 const ranges = ["7d", "30d", "90d", "180d", "1y"] as const satisfies readonly WorkspaceRange[];
-const tabs = ["Strategy", "Backtests", "Optimisation", "Notes", "Logs"] as const;
+const tabs = ["Strategy", "Backtests", "Optimisation", "Deploy", "Notes", "Logs"] as const;
 const allowedRegimeOptions = [
   "Bull Trend",
   "Bear Trend",
@@ -104,6 +114,15 @@ export function WorkspaceShell() {
   const [noteBody, setNoteBody] = useState(defaultNoteBody());
   const [notesStatus, setNotesStatus] = useState<"idle" | "loading" | "saving" | "error">("idle");
   const [notesError, setNotesError] = useState<string | null>(null);
+  const [paperAccounts, setPaperAccounts] = useState<PaperAccount[]>([]);
+  const [paperDeployments, setPaperDeployments] = useState<PaperDeployment[]>([]);
+  const [selectedPaperAccountId, setSelectedPaperAccountId] = useState("");
+  const [selectedPaperDeploymentId, setSelectedPaperDeploymentId] = useState("");
+  const [paperAccountName, setPaperAccountName] = useState("Workspace paper deploy");
+  const [paperStartingBalance, setPaperStartingBalance] = useState(10_000);
+  const [deployStatus, setDeployStatus] = useState<"idle" | "loading" | "saving" | "error">("idle");
+  const [deployError, setDeployError] = useState<string | null>(null);
+  const [deployNotice, setDeployNotice] = useState<string | null>(null);
 
   const displayMarket = useMemo(() => {
     if (market !== "Manual") return market;
@@ -185,6 +204,29 @@ export function WorkspaceShell() {
       cancelled = true;
     };
   }, [displayMarket, timeframe]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDeployStatus("loading");
+    Promise.all([getPaperAccounts(), getPaperDeployments()])
+      .then(([accounts, deployments]) => {
+        if (cancelled) return;
+        setPaperAccounts(accounts);
+        setPaperDeployments(deployments);
+        setSelectedPaperAccountId((current) => current || accounts[0]?.id || "");
+        setSelectedPaperDeploymentId((current) => current || deployments[0]?.id || "");
+        setDeployStatus("idle");
+        setDeployError(null);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setDeployStatus("error");
+        setDeployError(errorMessage(loadError, "Unable to load paper deploy workspace."));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleRefresh(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -315,6 +357,85 @@ export function WorkspaceShell() {
     } catch (deleteError) {
       setNotesStatus("error");
       setNotesError(errorMessage(deleteError, "Unable to delete workspace note."));
+    }
+  }
+
+  async function handleCreatePaperAccount() {
+    setDeployStatus("saving");
+    setDeployError(null);
+    setDeployNotice(null);
+    try {
+      const account = await createPaperAccount({
+        name: paperAccountName,
+        starting_balance: paperStartingBalance,
+      });
+      setPaperAccounts((current) => [account, ...current]);
+      setSelectedPaperAccountId(account.id);
+      setDeployStatus("idle");
+      setDeployNotice(`${account.name} is ready for paper deploy.`);
+    } catch (accountError) {
+      setDeployStatus("error");
+      setDeployError(errorMessage(accountError, "Unable to create paper account."));
+    }
+  }
+
+  async function handleStartPaperDeploy(backtestId: string) {
+    if (!selectedPaperAccountId) {
+      setDeployStatus("error");
+      setDeployError("Create or select a paper account before starting deployment.");
+      return;
+    }
+    setDeployStatus("saving");
+    setDeployError(null);
+    setDeployNotice(null);
+    try {
+      const deployment = await startWorkspacePaperDeploy({
+        backtest_id: backtestId,
+        paper_account_id: selectedPaperAccountId,
+      });
+      setPaperDeployments((current) => [deployment, ...current.filter((item) => item.id !== deployment.id)]);
+      setSelectedPaperDeploymentId(deployment.id);
+      setDeployStatus("idle");
+      setDeployNotice("Paper deploy started.");
+    } catch (deployErrorValue) {
+      setDeployStatus("error");
+      setDeployError(errorMessage(deployErrorValue, "Unable to start paper deploy."));
+    }
+  }
+
+  async function handleStepPaperDeploy(deploymentId: string) {
+    setDeployStatus("saving");
+    setDeployError(null);
+    setDeployNotice(null);
+    try {
+      const result = await stepPaperDeployment(deploymentId);
+      setPaperDeployments((current) => [result.deployment, ...current.filter((item) => item.id !== deploymentId)]);
+      setSelectedPaperDeploymentId(result.deployment.id);
+      setDeployStatus("idle");
+      setDeployNotice(result.message);
+    } catch (stepError) {
+      setDeployStatus("error");
+      setDeployError(errorMessage(stepError, "Unable to step paper deploy."));
+    }
+  }
+
+  async function handlePaperDeployStatus(
+    deploymentId: string,
+    action: (id: string) => Promise<PaperDeployment>,
+    message: string,
+  ) {
+    setDeployStatus("saving");
+    setDeployError(null);
+    setDeployNotice(null);
+    try {
+      const deployment = await action(deploymentId);
+      setPaperDeployments((current) => [deployment, ...current.filter((item) => item.id !== deployment.id)]);
+      setSelectedPaperDeploymentId(deployment.id);
+      setDeployStatus("idle");
+      setDeployNotice(message);
+    } catch (statusError) {
+      setDeployStatus("error");
+      setDeployError(errorMessage(statusError, "Unable to update paper deploy."));
     }
   }
 
@@ -518,6 +639,28 @@ export function WorkspaceShell() {
             onNoteBodyChange={setNoteBody}
             onSaveNote={handleSaveNote}
             onDeleteNote={handleDeleteNote}
+            paperAccounts={paperAccounts}
+            paperDeployments={paperDeployments}
+            selectedPaperAccountId={selectedPaperAccountId}
+            selectedPaperDeploymentId={selectedPaperDeploymentId}
+            paperAccountName={paperAccountName}
+            paperStartingBalance={paperStartingBalance}
+            deployStatus={deployStatus}
+            deployError={deployError}
+            deployNotice={deployNotice}
+            onPaperAccountChange={setSelectedPaperAccountId}
+            onPaperDeploymentChange={setSelectedPaperDeploymentId}
+            onPaperAccountNameChange={setPaperAccountName}
+            onPaperStartingBalanceChange={setPaperStartingBalance}
+            onCreatePaperAccount={handleCreatePaperAccount}
+            onStartPaperDeploy={handleStartPaperDeploy}
+            onStepPaperDeploy={handleStepPaperDeploy}
+            onPausePaperDeploy={(deploymentId) =>
+              handlePaperDeployStatus(deploymentId, pausePaperDeployment, "Paper deploy paused.")
+            }
+            onStopPaperDeploy={(deploymentId) =>
+              handlePaperDeployStatus(deploymentId, stopPaperDeployment, "Paper deploy stopped.")
+            }
           />
         </section>
       </div>
@@ -817,6 +960,7 @@ function TabIcon({ tab }: { tab: Tab }) {
   if (tab === "Strategy") return <Settings2 className={className} aria-hidden="true" />;
   if (tab === "Backtests") return <BarChart3 className={className} aria-hidden="true" />;
   if (tab === "Optimisation") return <SlidersHorizontal className={className} aria-hidden="true" />;
+  if (tab === "Deploy") return <Play className={className} aria-hidden="true" />;
   if (tab === "Notes") return <NotebookText className={className} aria-hidden="true" />;
   return <Terminal className={className} aria-hidden="true" />;
 }
@@ -863,6 +1007,24 @@ function BottomPanel({
   onNoteBodyChange,
   onSaveNote,
   onDeleteNote,
+  paperAccounts,
+  paperDeployments,
+  selectedPaperAccountId,
+  selectedPaperDeploymentId,
+  paperAccountName,
+  paperStartingBalance,
+  deployStatus,
+  deployError,
+  deployNotice,
+  onPaperAccountChange,
+  onPaperDeploymentChange,
+  onPaperAccountNameChange,
+  onPaperStartingBalanceChange,
+  onCreatePaperAccount,
+  onStartPaperDeploy,
+  onStepPaperDeploy,
+  onPausePaperDeploy,
+  onStopPaperDeploy,
 }: {
   activeTab: Tab;
   market: string;
@@ -905,6 +1067,24 @@ function BottomPanel({
   onNoteBodyChange: (value: string) => void;
   onSaveNote: () => void;
   onDeleteNote: (noteId: string) => void;
+  paperAccounts: PaperAccount[];
+  paperDeployments: PaperDeployment[];
+  selectedPaperAccountId: string;
+  selectedPaperDeploymentId: string;
+  paperAccountName: string;
+  paperStartingBalance: number;
+  deployStatus: "idle" | "loading" | "saving" | "error";
+  deployError: string | null;
+  deployNotice: string | null;
+  onPaperAccountChange: (accountId: string) => void;
+  onPaperDeploymentChange: (deploymentId: string) => void;
+  onPaperAccountNameChange: (value: string) => void;
+  onPaperStartingBalanceChange: (value: number) => void;
+  onCreatePaperAccount: () => void;
+  onStartPaperDeploy: (backtestId: string) => void;
+  onStepPaperDeploy: (deploymentId: string) => void;
+  onPausePaperDeploy: (deploymentId: string) => void;
+  onStopPaperDeploy: (deploymentId: string) => void;
 }) {
   if (activeTab === "Strategy") {
     const essentialKeys = selectedTemplate ? essentialParameterKeys(selectedTemplate) : [];
@@ -1096,6 +1276,157 @@ function BottomPanel({
             <MetricBox label="Best Score" value={metricNumber(best?.evaluation.risk_adjusted_score)} />
           </div>
           <OptimisationResultsTable result={optimisationResult} />
+        </section>
+      </div>
+    );
+  }
+
+  if (activeTab === "Deploy") {
+    const latestBacktest = backtestResult?.backtest ?? state?.latest_backtests[0] ?? null;
+    const relevantDeployments = paperDeployments.filter((deployment) =>
+      latestBacktest
+        ? deployment.strategy_version_id === latestBacktest.strategy_version_id
+        : deployment.dataset_id === state?.dataset_id,
+    );
+    const selectedDeployment =
+      relevantDeployments.find((deployment) => deployment.id === selectedPaperDeploymentId) ??
+      relevantDeployments[0] ??
+      paperDeployments.find((deployment) => deployment.id === selectedPaperDeploymentId) ??
+      null;
+    const position = selectedDeployment?.positions.find((item) => item.quantity !== 0) ?? selectedDeployment?.positions[0] ?? null;
+
+    return (
+      <div className="grid gap-4 p-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
+            <Play className="h-4 w-4" aria-hidden="true" />
+            Paper Deploy
+          </div>
+          <div className="mt-3 rounded-md border border-zinc-800 bg-[#0d1017] p-3">
+            <p className="text-xs uppercase text-zinc-500">Latest Backtest</p>
+            <p className="mt-2 text-sm text-zinc-100">
+              {latestBacktest ? `${latestBacktest.status} / ${metricPercent(latestBacktest.metrics["total_return"])}` : "Run a backtest first."}
+            </p>
+          </div>
+
+          <label className="mt-3 block text-xs uppercase text-zinc-500">
+            Paper account
+            <select
+              value={selectedPaperAccountId}
+              onChange={(event) => onPaperAccountChange(event.target.value)}
+              className="mt-1 h-10 w-full rounded-md border border-zinc-700 bg-[#0d1017] px-3 text-sm text-zinc-100 outline-none"
+            >
+              <option value="">Select account</option>
+              {paperAccounts.map((account) => (
+                <option key={account.id} value={account.id} className="bg-zinc-950">
+                  {account.name} / {formatPrice(account.equity)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_120px] gap-2">
+            <input
+              value={paperAccountName}
+              onChange={(event) => onPaperAccountNameChange(event.target.value)}
+              className="h-10 rounded-md border border-zinc-700 bg-[#0d1017] px-3 text-sm text-zinc-100 outline-none"
+              placeholder="Account name"
+            />
+            <input
+              type="number"
+              value={paperStartingBalance}
+              onChange={(event) => onPaperStartingBalanceChange(Number(event.target.value))}
+              className="h-10 rounded-md border border-zinc-700 bg-[#0d1017] px-3 text-sm text-zinc-100 outline-none"
+            />
+          </div>
+          <Button
+            type="button"
+            onClick={onCreatePaperAccount}
+            disabled={deployStatus === "saving"}
+            className="mt-2 h-9 w-full gap-2 border border-zinc-700 bg-[#0d1017] text-zinc-200 shadow-none hover:bg-zinc-900"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Create Account
+          </Button>
+
+          <Button
+            type="button"
+            onClick={() => latestBacktest && onStartPaperDeploy(latestBacktest.id)}
+            disabled={!latestBacktest || !selectedPaperAccountId || deployStatus === "saving"}
+            className="mt-4 h-10 w-full gap-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 shadow-none hover:bg-emerald-500/20"
+          >
+            {deployStatus === "saving" ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Play className="h-4 w-4" aria-hidden="true" />
+            )}
+            Start Paper Deploy
+          </Button>
+
+          {deployNotice ? <p className="mt-3 text-sm text-emerald-300">{deployNotice}</p> : null}
+          {deployStatus === "error" ? <p className="mt-3 text-sm text-red-300">{deployError}</p> : null}
+        </section>
+
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase text-zinc-500">Deployment</p>
+              <h2 className="mt-1 text-lg font-semibold text-zinc-100">
+                {selectedDeployment ? selectedDeployment.status : "No paper deploy selected"}
+              </h2>
+            </div>
+            <select
+              value={selectedDeployment?.id ?? ""}
+              onChange={(event) => onPaperDeploymentChange(event.target.value)}
+              className="h-9 rounded-md border border-zinc-700 bg-[#0d1017] px-3 text-sm text-zinc-100 outline-none"
+            >
+              <option value="">Select deploy</option>
+              {relevantDeployments.map((deployment) => (
+                <option key={deployment.id} value={deployment.id} className="bg-zinc-950">
+                  {deployment.status} / {formatDateTime(deployment.started_at)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <MetricBox label="Equity" value={formatPrice(selectedDeployment?.account?.equity)} />
+            <MetricBox label="Cash" value={formatPrice(selectedDeployment?.account?.cash_balance)} />
+            <MetricBox label="Position" value={position ? `${formatPrice(position.quantity)} ${position.symbol}` : "--"} />
+            <MetricBox label="Realized PnL" value={formatPrice(position?.realized_pnl)} />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              onClick={() => selectedDeployment && onStepPaperDeploy(selectedDeployment.id)}
+              disabled={!selectedDeployment || selectedDeployment.status !== "running" || deployStatus === "saving"}
+              className="h-9 gap-2 border border-sky-500/30 bg-sky-500/10 text-sky-200 shadow-none hover:bg-sky-500/20"
+            >
+              <Play className="h-4 w-4" aria-hidden="true" />
+              Step Simulation
+            </Button>
+            <Button
+              type="button"
+              onClick={() => selectedDeployment && onPausePaperDeploy(selectedDeployment.id)}
+              disabled={!selectedDeployment || selectedDeployment.status !== "running" || deployStatus === "saving"}
+              className="h-9 gap-2 border border-zinc-700 bg-[#0d1017] text-zinc-200 shadow-none hover:bg-zinc-900"
+            >
+              <Pause className="h-4 w-4" aria-hidden="true" />
+              Pause
+            </Button>
+            <Button
+              type="button"
+              onClick={() => selectedDeployment && onStopPaperDeploy(selectedDeployment.id)}
+              disabled={!selectedDeployment || selectedDeployment.status === "stopped" || deployStatus === "saving"}
+              className="h-9 gap-2 border border-red-500/30 bg-red-500/10 text-red-200 shadow-none hover:bg-red-500/20"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Stop
+            </Button>
+          </div>
+
+          <PaperTradeTable trades={selectedDeployment?.trades ?? []} />
         </section>
       </div>
     );
@@ -1377,6 +1708,42 @@ function TradeTable({ trades }: { trades: WorkspaceBacktestResult["backtest"]["t
               <td className={cn("px-3 py-2", trade.pnl >= 0 ? "text-emerald-300" : "text-red-300")}>
                 {formatPrice(trade.pnl)}
               </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PaperTradeTable({ trades }: { trades: PaperDeployment["trades"] }) {
+  if (trades.length === 0) {
+    return <p className="mt-4 rounded-md border border-zinc-800 bg-[#0d1017] p-3 text-sm text-zinc-500">No paper trades yet.</p>;
+  }
+  return (
+    <div className="mt-4 max-h-48 overflow-auto rounded-md border border-zinc-800">
+      <table className="w-full text-left text-xs">
+        <thead className="sticky top-0 bg-[#0d1017] text-zinc-500">
+          <tr>
+            <th className="px-3 py-2 font-medium">Time</th>
+            <th className="px-3 py-2 font-medium">Side</th>
+            <th className="px-3 py-2 font-medium">Price</th>
+            <th className="px-3 py-2 font-medium">Qty</th>
+            <th className="px-3 py-2 font-medium">PnL</th>
+            <th className="px-3 py-2 font-medium">Reason</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-900 text-zinc-300">
+          {trades.slice(-20).map((trade) => (
+            <tr key={trade.id}>
+              <td className="px-3 py-2">{formatDateTime(trade.timestamp)}</td>
+              <td className="px-3 py-2">{trade.side}</td>
+              <td className="px-3 py-2">{formatPrice(trade.price)}</td>
+              <td className="px-3 py-2">{formatPrice(trade.quantity)}</td>
+              <td className={cn("px-3 py-2", trade.pnl >= 0 ? "text-emerald-300" : "text-red-300")}>
+                {formatPrice(trade.pnl)}
+              </td>
+              <td className="px-3 py-2 text-zinc-500">{trade.reason}</td>
             </tr>
           ))}
         </tbody>

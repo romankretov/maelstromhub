@@ -13,7 +13,7 @@ export const workflowSteps = [
   "Research",
   "Strategy Builder",
   "Backtest Studio",
-  "Paper Trading",
+  "Paper Deploy",
   "Deployment Center",
   "Monitor",
 ] as const;

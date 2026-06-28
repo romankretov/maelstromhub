@@ -485,6 +485,11 @@ class WorkspaceOptimiseRequest(WorkspaceLoadMarketRequest):
     allowed_regimes: list[str] | None = None
 
 
+class WorkspaceStartPaperDeployRequest(DomainModel):
+    backtest_id: UUID
+    paper_account_id: UUID
+
+
 class WorkspaceMarketMetadata(DomainModel):
     symbol: str
     provider: str = "hyperliquid"

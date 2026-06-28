@@ -507,7 +507,7 @@ async def _promote_backtested_to_paper_trading(
             strategy,
             from_status,
             StrategyStatus.PAPER_TRADING,
-            ["Run at least one successful backtest before promoting this strategy to Paper Trading."],
+            ["Run at least one successful backtest before promoting this strategy to Paper Deploy."],
         )
 
     latest_run = runs[0]
@@ -518,7 +518,7 @@ async def _promote_backtested_to_paper_trading(
             strategy,
             from_status,
             StrategyStatus.PAPER_TRADING,
-            ["Latest backtest verdict is too risky for Paper Trading.", *evaluation.reasons],
+            ["Latest backtest verdict is too risky for Paper Deploy.", *evaluation.reasons],
             backtest_run=_run_to_schema(latest_run),
             evaluation=evaluation,
         )

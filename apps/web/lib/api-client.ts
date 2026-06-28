@@ -440,6 +440,11 @@ export type WorkspaceOptimiseRequest = WorkspaceLoadMarketRequest & {
   allowed_regimes?: string[] | null;
 };
 
+export type WorkspaceStartPaperDeployRequest = {
+  backtest_id: string;
+  paper_account_id: string;
+};
+
 export type WorkspaceMarketMetadata = {
   symbol: string;
   provider: string;
@@ -680,6 +685,15 @@ export async function runWorkspaceBacktest(
 
 export async function optimiseWorkspace(payload: WorkspaceOptimiseRequest): Promise<WorkspaceOptimisationResult> {
   return request<WorkspaceOptimisationResult>("/workspace/optimise", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function startWorkspacePaperDeploy(
+  payload: WorkspaceStartPaperDeployRequest,
+): Promise<PaperDeployment> {
+  return request<PaperDeployment>("/workspace/paper-deploy", {
     method: "POST",
     body: JSON.stringify(payload),
   });

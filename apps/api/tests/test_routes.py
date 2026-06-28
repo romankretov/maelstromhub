@@ -539,6 +539,97 @@ async def test_workspace_run_backtest_blocks_until_candles_exist(client: httpx.A
 
 
 @pytest.mark.anyio
+async def test_workspace_paper_deploy_starts_from_latest_backtest() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    async def override_get_session() -> AsyncIterator[AsyncSessionAdapter]:
+        with session_factory() as session:
+            yield AsyncSessionAdapter(session)
+
+    app.dependency_overrides[get_session] = override_get_session
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
+            load_response = await test_client.post(
+                "/workspace/load-market",
+                json={"symbol": "BTC", "timeframe": "1h", "range": "90d"},
+            )
+            dataset_id = UUID(load_response.json()["dataset_id"])
+            with session_factory() as sync_session:
+                start = datetime(2026, 1, 1, tzinfo=UTC)
+                for index in range(80):
+                    close = 100.0 + index
+                    sync_session.add(
+                        CandleORM(
+                            dataset_id=dataset_id,
+                            opened_at=start + timedelta(hours=index),
+                            open=close - 0.5,
+                            high=close + 1.0,
+                            low=close - 1.0,
+                            close=close,
+                            volume=1000.0 + index,
+                            trade_count=index + 1,
+                        )
+                    )
+                sync_session.commit()
+
+            state_response = await test_client.get("/workspace/state?symbol=BTC&timeframe=1h&range=90d")
+            template = next(
+                item
+                for item in state_response.json()["available_strategy_templates"]
+                if item["name"].lower().startswith("sma")
+            )
+            backtest_response = await test_client.post(
+                "/workspace/run-backtest",
+                json={
+                    "symbol": "BTC",
+                    "timeframe": "1h",
+                    "range": "90d",
+                    "template_id": template["id"],
+                    "parameters": {"fast_window": 20, "slow_window": 50, "confidence": 0.8, "suggested_size": 1.0},
+                    "starting_balance": 10000,
+                    "fee_bps": 5,
+                    "slippage_bps": 2,
+                    "allowed_regimes": None,
+                },
+            )
+            account_response = await test_client.post(
+                "/paper/accounts",
+                json={"name": "Workspace deploy account", "starting_balance": 10000},
+            )
+            deploy_response = await test_client.post(
+                "/workspace/paper-deploy",
+                json={
+                    "backtest_id": backtest_response.json()["backtest"]["id"],
+                    "paper_account_id": account_response.json()["id"],
+                },
+            )
+            step_response = await test_client.post(f"/paper/deployments/{deploy_response.json()['id']}/step")
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+    backtest = backtest_response.json()["backtest"]
+    deployment = deploy_response.json()
+    assert backtest_response.status_code == 200
+    assert backtest["status"] == "succeeded"
+    assert account_response.status_code == 201
+    assert deploy_response.status_code == 201
+    assert deployment["status"] == "running"
+    assert deployment["strategy_version_id"] == backtest["strategy_version_id"]
+    assert deployment["paper_account_id"] == account_response.json()["id"]
+    assert step_response.status_code == 200
+
+
+@pytest.mark.anyio
 async def test_workspace_optimise_runs_ranked_backtests() -> None:
     from datetime import UTC, datetime, timedelta
 

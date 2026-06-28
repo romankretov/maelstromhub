@@ -80,7 +80,7 @@ export function PaperTradingClient() {
       setSelectedVersionId((current) => current || loadedVersions[0]?.id || "");
       setSelectedDeploymentId((current) => current || loadedDeployments[0]?.id || "");
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load paper trading workspace.");
+      setError(loadError instanceof Error ? loadError.message : "Unable to load paper deploy workspace.");
     } finally {
       setLoading(false);
     }
@@ -119,7 +119,7 @@ export function PaperTradingClient() {
       });
       setAccounts((current) => [account, ...current]);
       setSelectedAccountId(account.id);
-      setNotice(`${account.name} is ready for paper trading.`);
+      setNotice(`${account.name} is ready for paper deploy.`);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to create paper account.");
     } finally {
@@ -144,9 +144,9 @@ export function PaperTradingClient() {
       });
       setDeployments((current) => [deployment, ...current]);
       setSelectedDeploymentId(deployment.id);
-      setNotice("Paper deployment started.");
+      setNotice("Paper deploy started.");
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to start paper deployment.");
+      setError(saveError instanceof Error ? saveError.message : "Unable to start paper deploy.");
     } finally {
       setBusy(false);
     }
@@ -168,23 +168,23 @@ export function PaperTradingClient() {
       ]);
       setNotice(result.message);
     } catch (stepError) {
-      setError(stepError instanceof Error ? stepError.message : "Unable to step deployment.");
+      setError(stepError instanceof Error ? stepError.message : "Unable to step paper deploy.");
     } finally {
       setBusy(false);
     }
   }
 
   async function handlePause() {
-    await updateDeploymentStatus(() => pausePaperDeployment(selectedDeploymentId), "Deployment paused.");
+    await updateDeploymentStatus(() => pausePaperDeployment(selectedDeploymentId), "Paper deploy paused.");
   }
 
   async function handleStop() {
-    await updateDeploymentStatus(() => stopPaperDeployment(selectedDeploymentId), "Deployment stopped.");
+    await updateDeploymentStatus(() => stopPaperDeployment(selectedDeploymentId), "Paper deploy stopped.");
   }
 
   async function updateDeploymentStatus(action: () => Promise<PaperDeployment>, message: string) {
     if (!selectedDeploymentId) {
-      setError("Select a deployment first.");
+      setError("Select a paper deploy first.");
       return;
     }
     setBusy(true);
@@ -195,7 +195,7 @@ export function PaperTradingClient() {
       setDeployments((current) => [deployment, ...current.filter((existing) => existing.id !== deployment.id)]);
       setNotice(message);
     } catch (statusError) {
-      setError(statusError instanceof Error ? statusError.message : "Unable to update deployment.");
+      setError(statusError instanceof Error ? statusError.message : "Unable to update paper deploy.");
     } finally {
       setBusy(false);
     }
@@ -209,7 +209,7 @@ export function PaperTradingClient() {
       {notice ? (
         <section className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">{notice}</section>
       ) : null}
-      {loading ? <LoadingState label="Loading paper trading workspace" /> : null}
+      {loading ? <LoadingState label="Loading paper deploy workspace" /> : null}
 
       <section className="grid gap-6 xl:grid-cols-[360px_1fr]">
         <div className="space-y-4">
@@ -245,7 +245,7 @@ export function PaperTradingClient() {
           </form>
 
           <form onSubmit={handleStartDeployment} className="rounded-lg border bg-card p-5">
-            <h2 className="text-base font-semibold">Start deployment</h2>
+            <h2 className="text-base font-semibold">Start Paper Deploy</h2>
             <label className="mt-5 block text-sm font-medium" htmlFor="paper-account">
               Paper account
               <select
@@ -282,7 +282,7 @@ export function PaperTradingClient() {
             </label>
             <Button className="mt-5 w-full gap-2" type="submit" disabled={busy || accounts.length === 0 || versions.length === 0}>
               <Play className="h-4 w-4" aria-hidden="true" />
-              Start deployment
+              Start Paper Deploy
             </Button>
           </form>
         </div>
@@ -292,7 +292,7 @@ export function PaperTradingClient() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
-                <h2 className="text-base font-semibold">Paper deployment</h2>
+                <h2 className="text-base font-semibold">Paper Deploy</h2>
               </div>
               <Button variant="outline" size="sm" className="gap-2" type="button" onClick={() => void loadWorkspace()}>
                 <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
@@ -302,8 +302,8 @@ export function PaperTradingClient() {
             {deployments.length === 0 ? (
               <FeedbackState
                 icon={Activity}
-                title="No paper deployments"
-                description="Create an account, choose a Backtested strategy version, and start a manual paper deployment."
+                title="No paper deploys"
+                description="Create an account, choose a Backtested strategy version, and start a manual paper deploy."
               />
             ) : (
               <>

@@ -18,6 +18,7 @@ from app.db.models import (
     WorkspaceNoteORM,
 )
 from app.db.backtest_repositories import create_backtest_run
+from app.db.paper_repositories import create_paper_deployment
 from app.db.repositories import _new_id, create_audit_event
 from app.db.research_repositories import (
     SYSTEM_TIMEFRAME_INTERVALS,
@@ -40,11 +41,14 @@ from maelstromhub_core import (
     BacktestRun,
     BacktestRunCreate,
     BacktestRunDetail,
+    BacktestStatus,
     Candle,
     CandleBackfillRequest,
     Dataset,
     FeatureComputeRequest,
     IngestionJobStatus,
+    PaperDeployment,
+    PaperDeploymentCreate,
     StrategyStatus,
     StrategyVersionCreate,
     WorkspaceBacktestResult,
@@ -60,6 +64,7 @@ from maelstromhub_core import (
     WorkspaceOptimiseRequest,
     WorkspaceRange,
     WorkspaceRunBacktestRequest,
+    WorkspaceStartPaperDeployRequest,
     WorkspaceState,
 )
 
@@ -331,6 +336,42 @@ class WorkspaceService:
         await session.delete(note)
         await create_audit_event(session, actor="system", action="deleted_workspace_note", subject=note_id, flush=False)
         await session.commit()
+
+    async def start_paper_deploy(
+        self,
+        session: AsyncSession,
+        payload: WorkspaceStartPaperDeployRequest,
+    ) -> PaperDeployment:
+        backtest = await session.get(BacktestRunORM, payload.backtest_id)
+        if backtest is None:
+            raise HTTPException(status_code=404, detail="Backtest not found")
+        if backtest.status != BacktestStatus.SUCCEEDED.value:
+            raise HTTPException(status_code=400, detail="Only succeeded backtests can be paper deployed.")
+        version = await session.get(StrategyVersionORM, backtest.strategy_version_id)
+        if version is None:
+            raise HTTPException(status_code=404, detail="Strategy version not found")
+        strategy = await session.get(StrategyORM, version.strategy_id)
+        if strategy is None:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        if strategy.status == StrategyStatus.DRAFT.value:
+            strategy.status = StrategyStatus.BACKTESTED.value
+            await create_audit_event(
+                session,
+                actor="system",
+                action="promoted_workspace_strategy_to_backtested",
+                subject=strategy.id,
+                flush=False,
+            )
+            await session.commit()
+
+        return await create_paper_deployment(
+            session,
+            PaperDeploymentCreate(
+                strategy_id=strategy.id,
+                strategy_version_id=version.id,
+                paper_account_id=payload.paper_account_id,
+            ),
+        )
 
     async def _prepare_backtest_market(
         self,

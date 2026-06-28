@@ -486,7 +486,7 @@ export function StrategyBuilderClient() {
                     <div className="flex items-start justify-between gap-4">
                       <h2 className="font-semibold">{strategy.name}</h2>
                       <span className="shrink-0 rounded-md border px-2 py-1 text-xs text-muted-foreground">
-                        {strategy.status}
+                        {formatStrategyStatus(strategy.status)}
                       </span>
                     </div>
                     <p className="mt-3 text-sm leading-6 text-muted-foreground">{strategy.description}</p>
@@ -509,7 +509,7 @@ export function StrategyBuilderClient() {
           <div className="mt-4 flex flex-wrap gap-2">
             {strategyStatuses.map((status) => (
               <span key={status} className="rounded-md border px-3 py-1 text-sm text-muted-foreground">
-                {status}
+                {formatStrategyStatus(status)}
               </span>
             ))}
           </div>
@@ -517,4 +517,8 @@ export function StrategyBuilderClient() {
       </section>
     </div>
   );
+}
+
+function formatStrategyStatus(status: string) {
+  return status === "Paper Trading" ? "Paper Deploy" : status;
 }

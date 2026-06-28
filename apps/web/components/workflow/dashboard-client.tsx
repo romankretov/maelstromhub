@@ -160,7 +160,7 @@ export function DashboardClient() {
                     <div className="flex items-start justify-between gap-4">
                       <h3 className="font-semibold">{strategy.name}</h3>
                       <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">
-                        {strategy.status}
+                        {formatStrategyStatus(strategy.status)}
                       </span>
                     </div>
                     <p className="mt-4 text-sm leading-6 text-muted-foreground">{strategy.description}</p>
@@ -242,7 +242,7 @@ function getNextAction(
   versionCount: number,
 ) {
   if (strategy.status === "Backtested") {
-    return "Start a Paper Trading deployment.";
+    return "Start a Paper Deploy deployment.";
   }
   if (strategy.status !== "Draft") {
     return "Review lifecycle status before taking the next step.";
@@ -260,6 +260,10 @@ function getNextAction(
     return "Review risk-adjusted performance before promotion.";
   }
   return "Tune the strategy and rerun the backtest.";
+}
+
+function formatStrategyStatus(status: string) {
+  return status === "Paper Trading" ? "Paper Deploy" : status;
 }
 
 function getVerdict(run: BacktestRun) {
