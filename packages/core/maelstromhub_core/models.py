@@ -242,6 +242,65 @@ class Strategy(StrategyCreate):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class StrategyParameterValue(StrEnum):
+    NUMBER = "number"
+    STRING = "string"
+    BOOLEAN = "boolean"
+
+
+StrategyParameters = dict[str, int | float | str | bool | None]
+
+
+class StrategyTemplate(DomainModel):
+    id: str
+    name: str
+    description: str
+    required_features: list[str] = Field(default_factory=list)
+    parameters: dict[str, str] = Field(default_factory=dict)
+    default_parameters: StrategyParameters = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class StrategyVersionCreate(DomainModel):
+    template_id: str
+    dataset_id: str
+    parameters: StrategyParameters = Field(default_factory=dict)
+
+
+class StrategyVersion(StrategyVersionCreate):
+    id: str
+    strategy_id: str
+    version_number: int
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SignalSide(StrEnum):
+    LONG = "long"
+    SHORT = "short"
+    FLAT = "flat"
+
+
+class Signal(DomainModel):
+    id: str
+    strategy_version_id: str
+    strategy_id: str
+    dataset_id: str
+    timestamp: datetime
+    symbol: str
+    side: SignalSide
+    confidence: float
+    reason: str
+    suggested_size: float
+    metadata: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SignalRunResult(DomainModel):
+    strategy_version_id: str
+    signals_written: int
+    total_signals: int
+
+
 class AuditEvent(DomainModel):
     id: str
     actor: str

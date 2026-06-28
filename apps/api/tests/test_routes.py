@@ -20,10 +20,25 @@ from app.db.research_repositories import (
     list_dataset_candles,
     run_ingestion_job,
 )
+from app.db.models import FeatureSnapshotORM
+from app.db.repositories import create_strategy
 from app.db.session import get_session
+from app.db.strategy_repositories import (
+    create_strategy_version,
+    list_strategy_version_signals,
+    run_strategy_version_signals,
+)
 from app.main import app
 from app.providers.candles import ProviderCandle
-from maelstromhub_core import AssetCreate, CandleBackfillRequest, DatasetCreate, FeatureComputeRequest, TimeframeCreate
+from maelstromhub_core import (
+    AssetCreate,
+    CandleBackfillRequest,
+    DatasetCreate,
+    FeatureComputeRequest,
+    StrategyCreate,
+    StrategyVersionCreate,
+    TimeframeCreate,
+)
 
 
 class AsyncSessionAdapter:
@@ -212,6 +227,47 @@ async def test_create_standalone_strategy_draft(client: httpx.AsyncClient) -> No
     strategy = response.json()
     assert strategy["status"] == "Draft"
     assert strategy["source_idea_id"] is None
+
+
+@pytest.mark.anyio
+async def test_strategy_template_and_version_routes(client: httpx.AsyncClient) -> None:
+    _, _, dataset = await create_research_chain(client)
+    strategy_response = await client.post(
+        "/strategies",
+        json={
+            "name": "SMA Signal Study",
+            "description": "Turns feature snapshots into normalized signals.",
+        },
+    )
+    strategy = strategy_response.json()
+
+    templates_response = await client.get("/strategy-templates")
+    templates = templates_response.json()["strategy_templates"]
+    version_response = await client.post(
+        f"/strategies/{strategy['id']}/versions",
+        json={
+            "template_id": "sma_crossover",
+            "dataset_id": dataset["id"],
+            "parameters": {"confidence": 0.8, "suggested_size": 0.5},
+        },
+    )
+    version = version_response.json()
+    versions_response = await client.get(f"/strategies/{strategy['id']}/versions")
+    run_response = await client.post(f"/strategy-versions/{version['id']}/run-signals")
+    signals_response = await client.get(f"/strategy-versions/{version['id']}/signals")
+
+    assert templates_response.status_code == 200
+    assert {template["id"] for template in templates} == {"sma_crossover", "rsi_mean_reversion"}
+    assert version_response.status_code == 201
+    assert version["version_number"] == 1
+    assert version["parameters"]["confidence"] == 0.8
+    assert versions_response.json()["strategy_versions"][0]["id"] == version["id"]
+    assert run_response.json() == {
+        "strategy_version_id": version["id"],
+        "signals_written": 0,
+        "total_signals": 0,
+    }
+    assert signals_response.json() == {"signals": []}
 
 
 async def create_research_chain(client: httpx.AsyncClient) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -424,3 +480,77 @@ async def test_worker_execution_computes_features_idempotently() -> None:
         "rsi_14",
         "atr_14",
     }
+
+
+@pytest.mark.anyio
+async def test_strategy_runner_generates_idempotent_sma_signals() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        asset = await create_asset(session, AssetCreate(symbol="BTC", venue="hyperliquid"))
+        timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+        dataset = await create_dataset(
+            session,
+            DatasetCreate(asset_id=asset.id, timeframe_id=timeframe.id, name="BTC 1h research dataset"),
+        )
+        strategy = await create_strategy(
+            session,
+            StrategyCreate(name="SMA signal study", description="Feature-snapshot signal generation."),
+        )
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        for timestamp, fast, slow in [
+            (start, 10.0, 20.0),
+            (start + timedelta(hours=1), 30.0, 20.0),
+        ]:
+            session.add(
+                FeatureSnapshotORM(
+                    id=f"feature-snapshot-{timestamp.hour}-fast",
+                    dataset_id=dataset.id,
+                    timestamp=timestamp,
+                    feature_name="sma_20",
+                    numeric_value=fast,
+                    metadata_json={},
+                )
+            )
+            session.add(
+                FeatureSnapshotORM(
+                    id=f"feature-snapshot-{timestamp.hour}-slow",
+                    dataset_id=dataset.id,
+                    timestamp=timestamp,
+                    feature_name="sma_50",
+                    numeric_value=slow,
+                    metadata_json={},
+                )
+            )
+        await session.commit()
+
+        version = await create_strategy_version(
+            session,
+            strategy.id,
+            StrategyVersionCreate(
+                template_id="sma_crossover",
+                dataset_id=dataset.id,
+                parameters={"confidence": 0.9, "suggested_size": 0.25},
+            ),
+        )
+        first_result = await run_strategy_version_signals(session, version.id)
+        second_result = await run_strategy_version_signals(session, version.id)
+        signals = await list_strategy_version_signals(session, version.id)
+
+    engine.dispose()
+
+    assert first_result.signals_written == 2
+    assert second_result.signals_written == 2
+    assert second_result.total_signals == 2
+    assert [signal.side for signal in reversed(signals)] == ["short", "long"]
+    assert all(signal.confidence == 0.9 for signal in signals)
+    assert all(signal.suggested_size == 0.25 for signal in signals)

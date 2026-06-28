@@ -39,6 +39,8 @@ class StrategyORM(Base):
     )
 
     source_idea: Mapped[IdeaORM | None] = relationship(back_populates="strategies")
+    versions: Mapped[list["StrategyVersionORM"]] = relationship(back_populates="strategy", passive_deletes=True)
+    signals: Mapped[list["SignalORM"]] = relationship(back_populates="strategy", passive_deletes=True)
 
 
 class AuditEventORM(Base):
@@ -112,6 +114,8 @@ class DatasetORM(Base):
     candles: Mapped[list["CandleORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     ingestion_jobs: Mapped[list["IngestionJobORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     feature_snapshots: Mapped[list["FeatureSnapshotORM"]] = relationship(back_populates="dataset", passive_deletes=True)
+    strategy_versions: Mapped[list["StrategyVersionORM"]] = relationship(back_populates="dataset", passive_deletes=True)
+    signals: Mapped[list["SignalORM"]] = relationship(back_populates="dataset", passive_deletes=True)
 
 
 class CandleORM(Base):
@@ -176,6 +180,72 @@ class FeatureSnapshotORM(Base):
     )
 
     dataset: Mapped[DatasetORM] = relationship(back_populates="feature_snapshots")
+
+
+class StrategyTemplateORM(Base):
+    __tablename__ = "strategy_templates"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    required_features: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    parameters: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    default_parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    versions: Mapped[list["StrategyVersionORM"]] = relationship(back_populates="template", passive_deletes=True)
+
+
+class StrategyVersionORM(Base):
+    __tablename__ = "strategy_versions"
+    __table_args__ = (UniqueConstraint("strategy_id", "version_number", name="uq_strategy_versions_strategy_number"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
+    template_id: Mapped[str] = mapped_column(ForeignKey("strategy_templates.id", ondelete="RESTRICT"), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    strategy: Mapped[StrategyORM] = relationship(back_populates="versions")
+    template: Mapped[StrategyTemplateORM] = relationship(back_populates="versions")
+    dataset: Mapped[DatasetORM] = relationship(back_populates="strategy_versions")
+    signals: Mapped[list["SignalORM"]] = relationship(back_populates="strategy_version", passive_deletes=True)
+
+
+class SignalORM(Base):
+    __tablename__ = "signals"
+    __table_args__ = (UniqueConstraint("strategy_version_id", "timestamp", name="uq_signals_version_timestamp"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    strategy_version_id: Mapped[str] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
+    strategy_id: Mapped[str] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(80), nullable=False)
+    side: Mapped[str] = mapped_column(String(20), nullable=False)
+    confidence: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    suggested_size: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    strategy_version: Mapped[StrategyVersionORM] = relationship(back_populates="signals")
+    strategy: Mapped[StrategyORM] = relationship(back_populates="signals")
+    dataset: Mapped[DatasetORM] = relationship(back_populates="signals")
 
 
 class FeatureORM(Base):

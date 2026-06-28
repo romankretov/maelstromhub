@@ -96,6 +96,51 @@ export type Experiment = {
   created_at: string;
 };
 
+export type StrategyParameterValue = string | number | boolean | null;
+
+export type StrategyTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  required_features: string[];
+  parameters: Record<string, string>;
+  default_parameters: Record<string, StrategyParameterValue>;
+  created_at: string;
+};
+
+export type StrategyVersion = {
+  id: string;
+  strategy_id: string;
+  template_id: string;
+  dataset_id: string;
+  version_number: number;
+  parameters: Record<string, StrategyParameterValue>;
+  created_at: string;
+};
+
+export type SignalSide = "long" | "short" | "flat";
+
+export type Signal = {
+  id: string;
+  strategy_version_id: string;
+  strategy_id: string;
+  dataset_id: string;
+  timestamp: string;
+  symbol: string;
+  side: SignalSide;
+  confidence: number;
+  reason: string;
+  suggested_size: number;
+  metadata: Record<string, StrategyParameterValue>;
+  created_at: string;
+};
+
+export type SignalRunResult = {
+  strategy_version_id: string;
+  signals_written: number;
+  total_signals: number;
+};
+
 export type IdeaCreate = {
   title: string;
   thesis: string;
@@ -197,6 +242,12 @@ export type ExperimentCreate = {
   metrics?: Record<string, number>;
 };
 
+export type StrategyVersionCreate = {
+  template_id: string;
+  dataset_id: string;
+  parameters?: Record<string, StrategyParameterValue>;
+};
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -238,6 +289,38 @@ export async function createStrategy(payload: StrategyCreate): Promise<Strategy>
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function getStrategyTemplates(): Promise<StrategyTemplate[]> {
+  const body = await request<{ strategy_templates: StrategyTemplate[] }>("/strategy-templates");
+  return body.strategy_templates;
+}
+
+export async function getStrategyVersions(strategyId: string): Promise<StrategyVersion[]> {
+  const body = await request<{ strategy_versions: StrategyVersion[] }>(`/strategies/${strategyId}/versions`);
+  return body.strategy_versions;
+}
+
+export async function createStrategyVersion(
+  strategyId: string,
+  payload: StrategyVersionCreate,
+): Promise<StrategyVersion> {
+  return request<StrategyVersion>(`/strategies/${strategyId}/versions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function runStrategySignals(versionId: string): Promise<SignalRunResult> {
+  return request<SignalRunResult>(`/strategy-versions/${versionId}/run-signals`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function getStrategySignals(versionId: string): Promise<Signal[]> {
+  const body = await request<{ signals: Signal[] }>(`/strategy-versions/${versionId}/signals`);
+  return body.signals;
 }
 
 export async function getAuditEvents(): Promise<AuditEvent[]> {
