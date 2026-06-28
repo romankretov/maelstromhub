@@ -31,6 +31,54 @@ export type AuditEvent = {
   created_at: string;
 };
 
+export type Asset = {
+  id: string;
+  symbol: string;
+  venue: string;
+  description: string | null;
+  created_at: string;
+};
+
+export type Timeframe = {
+  id: string;
+  name: string;
+  interval: string;
+  description: string | null;
+  created_at: string;
+};
+
+export type Dataset = {
+  id: string;
+  asset_id: string;
+  timeframe_id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+};
+
+export type Feature = {
+  id: string;
+  dataset_id: string;
+  name: string;
+  values: Record<string, number>;
+  description: string | null;
+  created_at: string;
+};
+
+export type ExperimentStatus = "Draft" | "Running" | "Completed" | "Failed";
+
+export type Experiment = {
+  id: string;
+  dataset_id: string;
+  feature_id: string | null;
+  name: string;
+  hypothesis: string;
+  notes: string | null;
+  metrics: Record<string, number>;
+  status: ExperimentStatus;
+  created_at: string;
+};
+
 export type IdeaCreate = {
   title: string;
   thesis: string;
@@ -40,6 +88,41 @@ export type StrategyCreate = {
   name: string;
   source_idea_id?: string | null;
   description: string;
+};
+
+export type AssetCreate = {
+  symbol: string;
+  venue: string;
+  description?: string | null;
+};
+
+export type TimeframeCreate = {
+  name: string;
+  interval: string;
+  description?: string | null;
+};
+
+export type DatasetCreate = {
+  asset_id: string;
+  timeframe_id: string;
+  name: string;
+  description?: string | null;
+};
+
+export type FeatureCreate = {
+  dataset_id: string;
+  name: string;
+  values?: Record<string, number>;
+  description?: string | null;
+};
+
+export type ExperimentCreate = {
+  dataset_id: string;
+  feature_id?: string | null;
+  name: string;
+  hypothesis: string;
+  notes?: string | null;
+  metrics?: Record<string, number>;
 };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -88,4 +171,64 @@ export async function createStrategy(payload: StrategyCreate): Promise<Strategy>
 export async function getAuditEvents(): Promise<AuditEvent[]> {
   const body = await request<{ audit_events: AuditEvent[] }>("/audit-events");
   return body.audit_events;
+}
+
+export async function getAssets(): Promise<Asset[]> {
+  const body = await request<{ assets: Asset[] }>("/assets");
+  return body.assets;
+}
+
+export async function createAsset(payload: AssetCreate): Promise<Asset> {
+  return request<Asset>("/assets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTimeframes(): Promise<Timeframe[]> {
+  const body = await request<{ timeframes: Timeframe[] }>("/timeframes");
+  return body.timeframes;
+}
+
+export async function createTimeframe(payload: TimeframeCreate): Promise<Timeframe> {
+  return request<Timeframe>("/timeframes", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getDatasets(): Promise<Dataset[]> {
+  const body = await request<{ datasets: Dataset[] }>("/datasets");
+  return body.datasets;
+}
+
+export async function createDataset(payload: DatasetCreate): Promise<Dataset> {
+  return request<Dataset>("/datasets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getFeatures(): Promise<Feature[]> {
+  const body = await request<{ features: Feature[] }>("/features");
+  return body.features;
+}
+
+export async function createFeature(payload: FeatureCreate): Promise<Feature> {
+  return request<Feature>("/features", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getExperiments(): Promise<Experiment[]> {
+  const body = await request<{ experiments: Experiment[] }>("/experiments");
+  return body.experiments;
+}
+
+export async function createExperiment(payload: ExperimentCreate): Promise<Experiment> {
+  return request<Experiment>("/experiments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
