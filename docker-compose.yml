@@ -32,7 +32,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://maelstromhub:maelstromhub@postgres:5432/maelstromhub}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://maelstromhub:maelstromhub@postgres:5432/maelstromhub}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
@@ -50,7 +50,7 @@ services:
       context: .
       dockerfile: apps/worker/Dockerfile
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://maelstromhub:maelstromhub@postgres:5432/maelstromhub}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://maelstromhub:maelstromhub@postgres:5432/maelstromhub}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       postgres:

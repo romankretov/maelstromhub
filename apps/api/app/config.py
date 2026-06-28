@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://maelstromhub:maelstromhub@localhost:5432/maelstromhub"
+    database_url: str = "postgresql+asyncpg://maelstromhub:maelstromhub@localhost:5432/maelstromhub"
     redis_url: str = "redis://localhost:6379/0"
     service_name: str = "maelstromhub-api"
 

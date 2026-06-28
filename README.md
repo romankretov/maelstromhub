@@ -36,6 +36,13 @@ Services:
 - API health: http://localhost:8000/health
 - API docs: http://localhost:8000/docs
 
+Run database migrations and seed local workflow data:
+
+```bash
+docker compose exec api alembic -c alembic.ini upgrade head
+docker compose exec api python -m scripts.seed
+```
+
 Stop the stack:
 
 ```bash
@@ -59,6 +66,22 @@ python -m venv .venv
 . .venv/bin/activate
 pip install -e ../../packages/core -e ".[dev]"
 uvicorn app.main:app --reload
+```
+
+Database migrations and seed data from a local API venv:
+
+```bash
+cd apps/api
+alembic -c alembic.ini upgrade head
+python -m scripts.seed
+```
+
+Local database reset:
+
+```bash
+npm run compose:down
+docker volume rm maelstromhub_postgres-data
+npm run dev
 ```
 
 Worker:
