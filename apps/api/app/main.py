@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.routes.research import router as research_router
 from app.routes.workflow import router as workflow_router
 from maelstromhub_core import AssetSymbol
 
@@ -20,6 +21,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(research_router)
 app.include_router(workflow_router)
 
 

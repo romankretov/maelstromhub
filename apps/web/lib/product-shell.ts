@@ -3,6 +3,7 @@ import {
   FlaskConical,
   Gauge,
   Lightbulb,
+  Microscope,
   MonitorCog,
   Rocket,
   Settings,
@@ -13,6 +14,7 @@ import type { LucideIcon } from "lucide-react";
 
 export const workflowSteps = [
   "Idea",
+  "Research",
   "Strategy Builder",
   "Backtest Studio",
   "Paper Trading",
@@ -33,6 +35,7 @@ export const strategyStatuses = [
 export const navigationItems = [
   { title: "Dashboard", href: "/", icon: Gauge },
   { title: "Ideas Lab", href: "/ideas-lab", icon: Lightbulb },
+  { title: "Research", href: "/research", icon: Microscope },
   { title: "Strategy Builder", href: "/strategy-builder", icon: FlaskConical },
   { title: "Backtest Studio", href: "/backtest-studio", icon: TestTubeDiagonal },
   { title: "Paper Trading", href: "/paper-trading", icon: Activity },

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -53,3 +53,94 @@ class AuditEventORM(Base):
         default=lambda: datetime.now(UTC),
         nullable=False,
     )
+
+
+class AssetORM(Base):
+    __tablename__ = "assets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(40), nullable=False)
+    venue: Mapped[str] = mapped_column(String(80), nullable=False, default="hyperliquid")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    datasets: Mapped[list["DatasetORM"]] = relationship(back_populates="asset", passive_deletes=True)
+
+
+class TimeframeORM(Base):
+    __tablename__ = "timeframes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    interval: Mapped[str] = mapped_column(String(40), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    datasets: Mapped[list["DatasetORM"]] = relationship(back_populates="timeframe", passive_deletes=True)
+
+
+class DatasetORM(Base):
+    __tablename__ = "datasets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    timeframe_id: Mapped[str] = mapped_column(ForeignKey("timeframes.id", ondelete="RESTRICT"), nullable=False)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    asset: Mapped[AssetORM] = relationship(back_populates="datasets")
+    timeframe: Mapped[TimeframeORM] = relationship(back_populates="datasets")
+    features: Mapped[list["FeatureORM"]] = relationship(back_populates="dataset", passive_deletes=True)
+    experiments: Mapped[list["ExperimentORM"]] = relationship(back_populates="dataset", passive_deletes=True)
+
+
+class FeatureORM(Base):
+    __tablename__ = "features"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    values: Mapped[dict[str, float]] = mapped_column(JSON, nullable=False, default=dict)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    dataset: Mapped[DatasetORM] = relationship(back_populates="features")
+    experiments: Mapped[list["ExperimentORM"]] = relationship(back_populates="feature", passive_deletes=True)
+
+
+class ExperimentORM(Base):
+    __tablename__ = "experiments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    feature_id: Mapped[str | None] = mapped_column(ForeignKey("features.id", ondelete="SET NULL"), nullable=True)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metrics: Mapped[dict[str, float]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    dataset: Mapped[DatasetORM] = relationship(back_populates="experiments")
+    feature: Mapped[FeatureORM | None] = relationship(back_populates="experiments")

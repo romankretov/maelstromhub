@@ -22,6 +22,12 @@ class AsyncSessionAdapter:
     def add(self, *args: Any, **kwargs: Any) -> None:
         self._session.add(*args, **kwargs)
 
+    async def get(self, *args: Any, **kwargs: Any) -> Any:
+        return self._session.get(*args, **kwargs)
+
+    async def delete(self, instance: object) -> None:
+        self._session.delete(instance)
+
     async def flush(self) -> None:
         self._session.flush()
 
@@ -142,3 +148,90 @@ async def test_create_standalone_strategy_draft(client: httpx.AsyncClient) -> No
     strategy = response.json()
     assert strategy["status"] == "Draft"
     assert strategy["source_idea_id"] is None
+
+
+async def create_research_chain(client: httpx.AsyncClient) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    asset_response = await client.post(
+        "/assets",
+        json={"symbol": "BTC", "venue": "hyperliquid", "description": "Bitcoin perpetual"},
+    )
+    timeframe_response = await client.post(
+        "/timeframes",
+        json={"name": "One hour", "interval": "1h"},
+    )
+    asset = asset_response.json()
+    timeframe = timeframe_response.json()
+    dataset_response = await client.post(
+        "/datasets",
+        json={
+            "asset_id": asset["id"],
+            "timeframe_id": timeframe["id"],
+            "name": "BTC 1h research dataset",
+            "description": "Placeholder dataset metadata only.",
+        },
+    )
+
+    assert asset_response.status_code == 201
+    assert timeframe_response.status_code == 201
+    assert dataset_response.status_code == 201
+    return asset, timeframe, dataset_response.json()
+
+
+@pytest.mark.anyio
+async def test_research_crud_chain(client: httpx.AsyncClient) -> None:
+    asset, timeframe, dataset = await create_research_chain(client)
+
+    feature_response = await client.post(
+        "/features",
+        json={
+            "dataset_id": dataset["id"],
+            "name": "Volatility snapshot",
+            "values": {"realized_volatility": 0.42},
+            "description": "Feature snapshot placeholder.",
+        },
+    )
+    feature = feature_response.json()
+
+    experiment_response = await client.post(
+        "/experiments",
+        json={
+            "dataset_id": dataset["id"],
+            "feature_id": feature["id"],
+            "name": "Funding volatility study",
+            "hypothesis": "Volatility regimes may improve funding-rate research filters.",
+            "notes": "No backtest connected.",
+            "metrics": {"sample_count": 0},
+        },
+    )
+    experiment = experiment_response.json()
+
+    assert feature_response.status_code == 201
+    assert experiment_response.status_code == 201
+    assert asset["id"].startswith("asset-")
+    assert timeframe["id"].startswith("timeframe-")
+    assert dataset["asset_id"] == asset["id"]
+    assert feature["dataset_id"] == dataset["id"]
+    assert experiment["status"] == "Draft"
+    assert experiment["feature_id"] == feature["id"]
+
+    list_response = await client.get("/experiments")
+    assert list_response.json()["experiments"][0]["id"] == experiment["id"]
+
+
+@pytest.mark.anyio
+async def test_research_update_get_and_delete(client: httpx.AsyncClient) -> None:
+    asset, _, _ = await create_research_chain(client)
+
+    patch_response = await client.patch(
+        f"/assets/{asset['id']}",
+        json={"description": "Updated metadata"},
+    )
+    get_response = await client.get(f"/assets/{asset['id']}")
+    delete_response = await client.delete(f"/assets/{asset['id']}")
+    missing_response = await client.get(f"/assets/{asset['id']}")
+
+    assert patch_response.status_code == 200
+    assert patch_response.json()["description"] == "Updated metadata"
+    assert get_response.status_code == 200
+    assert delete_response.status_code == 204
+    assert missing_response.status_code == 404
