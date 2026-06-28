@@ -142,6 +142,7 @@ export type SignalRunResult = {
 };
 
 export type BacktestStatus = "started" | "succeeded" | "failed";
+export type BacktestVerdict = "Ready" | "Review" | "Blocked";
 
 export type BacktestRunCreate = {
   starting_balance?: number;
@@ -187,6 +188,23 @@ export type BacktestRun = {
 export type BacktestRunDetail = BacktestRun & {
   trades: BacktestTrade[];
   equity_curve: EquityCurveSnapshot[];
+};
+
+export type BacktestEvaluation = {
+  verdict: BacktestVerdict;
+  risk_adjusted_score: number;
+  reasons: string[];
+  thresholds: Record<string, number>;
+};
+
+export type StrategyPromotionResult = {
+  strategy: Strategy;
+  promoted: boolean;
+  from_status: StrategyStatus;
+  to_status: StrategyStatus;
+  reasons: string[];
+  backtest_run: BacktestRun | null;
+  evaluation: BacktestEvaluation | null;
 };
 
 export type IdeaCreate = {
@@ -336,6 +354,13 @@ export async function createStrategy(payload: StrategyCreate): Promise<Strategy>
   return request<Strategy>("/strategies", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function promoteStrategy(strategyId: string): Promise<StrategyPromotionResult> {
+  return request<StrategyPromotionResult>(`/strategies/${strategyId}/promote`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
 

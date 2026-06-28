@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Play, RefreshCw, TestTubeDiagonal } from "lucide-react";
+import { Award, Play, RefreshCw, TestTubeDiagonal } from "lucide-react";
 
 import { ErrorState, FeedbackState, LoadingState } from "@/components/shell/feedback";
 import { Button } from "@/components/ui/button";
@@ -226,6 +226,7 @@ export function BacktestStudioClient() {
                   ))}
                 </div>
               </section>
+              <BacktestComparison runs={runs} selectedRunId={selectedRun.id} onSelectRun={handleSelectRun} />
               <section className="rounded-lg border bg-card p-5">
                 <h2 className="text-base font-semibold">Equity curve</h2>
                 <EquityCurve snapshots={selectedRun.equity_curve} />
@@ -272,6 +273,77 @@ export function BacktestStudioClient() {
         </section>
       </section>
     </div>
+  );
+}
+
+function BacktestComparison({
+  runs,
+  selectedRunId,
+  onSelectRun,
+}: {
+  runs: BacktestRun[];
+  selectedRunId: string;
+  onSelectRun: (runId: string) => Promise<void>;
+}) {
+  const recentRuns = runs.slice(0, 5);
+  if (recentRuns.length === 0) {
+    return null;
+  }
+  const bestRun = [...recentRuns].sort(compareRuns)[0];
+
+  return (
+    <section className="rounded-lg border bg-card p-5">
+      <div className="flex items-center gap-2">
+        <Award className="h-4 w-4 text-primary" aria-hidden="true" />
+        <h2 className="text-base font-semibold">Backtest comparison</h2>
+      </div>
+      <div className="mt-4 overflow-x-auto rounded-md border">
+        <table className="min-w-[760px] w-full text-left text-sm">
+          <thead className="bg-muted/50 text-xs text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 font-medium">Run</th>
+              <th className="px-3 py-2 font-medium">Verdict</th>
+              <th className="px-3 py-2 font-medium">Score</th>
+              <th className="px-3 py-2 font-medium">Return</th>
+              <th className="px-3 py-2 font-medium">Drawdown</th>
+              <th className="px-3 py-2 font-medium">Trades</th>
+              <th className="px-3 py-2 font-medium">Win rate</th>
+              <th className="px-3 py-2 font-medium">Profit factor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recentRuns.map((run) => {
+              const isBest = run.id === bestRun.id;
+              const isSelected = run.id === selectedRunId;
+              return (
+                <tr
+                  key={run.id}
+                  className={isBest ? "border-t bg-accent/15" : isSelected ? "border-t bg-muted/40" : "border-t"}
+                >
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => void onSelectRun(run.id)}
+                      className="text-left font-medium hover:text-primary"
+                    >
+                      {new Date(run.created_at).toLocaleString()}
+                    </button>
+                    {isBest ? <span className="ml-2 text-xs text-muted-foreground">Best</span> : null}
+                  </td>
+                  <td className="px-3 py-2">{getVerdict(run)}</td>
+                  <td className="px-3 py-2">{getRiskAdjustedScore(run).toFixed(2)}</td>
+                  <td className="px-3 py-2">{formatPercent(numberMetric(run, "total_return"))}</td>
+                  <td className="px-3 py-2">{formatPercent(numberMetric(run, "max_drawdown"))}</td>
+                  <td className="px-3 py-2">{numberMetric(run, "trade_count")}</td>
+                  <td className="px-3 py-2">{formatPercent(numberMetric(run, "win_rate"))}</td>
+                  <td className="px-3 py-2">{numberMetric(run, "profit_factor").toFixed(2)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -345,20 +417,34 @@ function getMetricCards(run: BacktestRunDetail | null) {
   ];
 }
 
-function getVerdict(run: BacktestRunDetail) {
+function getVerdict(run: BacktestRun) {
   const totalReturn = numberMetric(run, "total_return");
   const maxDrawdown = numberMetric(run, "max_drawdown");
   const tradeCount = numberMetric(run, "trade_count");
-  if (maxDrawdown <= -0.2 || totalReturn <= -0.05) {
-    return "Dangerous";
+  if (run.status !== "succeeded" || maxDrawdown < -0.2 || totalReturn < -0.05 || tradeCount < 1) {
+    return "Blocked";
   }
-  if (totalReturn > 0.05 && maxDrawdown > -0.1 && tradeCount >= 1) {
-    return "Promising";
+  if (totalReturn > 0 && getRiskAdjustedScore(run) >= 1) {
+    return "Ready";
   }
-  return "Weak";
+  return "Review";
 }
 
-function numberMetric(run: BacktestRunDetail, key: string) {
+function getRiskAdjustedScore(run: BacktestRun) {
+  return numberMetric(run, "total_return") / Math.max(Math.abs(numberMetric(run, "max_drawdown")), 0.01);
+}
+
+function compareRuns(left: BacktestRun, right: BacktestRun) {
+  const verdictRank = { Blocked: 0, Review: 1, Ready: 2 };
+  const leftVerdict = getVerdict(left);
+  const rightVerdict = getVerdict(right);
+  return (
+    verdictRank[rightVerdict] - verdictRank[leftVerdict] ||
+    getRiskAdjustedScore(right) - getRiskAdjustedScore(left)
+  );
+}
+
+function numberMetric(run: BacktestRun, key: string) {
   const value = run.metrics[key];
   return typeof value === "number" ? value : 0;
 }

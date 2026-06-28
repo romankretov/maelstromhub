@@ -361,6 +361,29 @@ class BacktestRunDetail(BacktestRun):
     equity_curve: list[EquityCurveSnapshot] = Field(default_factory=list)
 
 
+class BacktestVerdict(StrEnum):
+    READY = "Ready"
+    REVIEW = "Review"
+    BLOCKED = "Blocked"
+
+
+class BacktestEvaluation(DomainModel):
+    verdict: BacktestVerdict
+    risk_adjusted_score: float
+    reasons: list[str] = Field(default_factory=list)
+    thresholds: dict[str, float | int] = Field(default_factory=dict)
+
+
+class StrategyPromotionResult(DomainModel):
+    strategy: Strategy
+    promoted: bool
+    from_status: StrategyStatus
+    to_status: StrategyStatus
+    reasons: list[str] = Field(default_factory=list)
+    backtest_run: BacktestRun | None = None
+    evaluation: BacktestEvaluation | None = None
+
+
 class AuditEvent(DomainModel):
     id: str
     actor: str

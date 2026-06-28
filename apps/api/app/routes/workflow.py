@@ -21,6 +21,7 @@ from app.db.strategy_repositories import (
     list_strategy_templates,
     list_strategy_version_signals,
     list_strategy_versions,
+    promote_strategy,
     run_strategy_version_signals,
 )
 from maelstromhub_core import (
@@ -34,6 +35,7 @@ from maelstromhub_core import (
     SignalRunResult,
     Strategy,
     StrategyCreate,
+    StrategyPromotionResult,
     StrategyTemplate,
     StrategyVersion,
     StrategyVersionCreate,
@@ -62,6 +64,11 @@ async def get_strategies(session: SessionDependency) -> dict[str, list[Strategy]
 @router.post("/strategies", status_code=201)
 async def post_strategy(payload: StrategyCreate, session: SessionDependency) -> Strategy:
     return await create_strategy(session, payload)
+
+
+@router.post("/strategies/{strategy_id}/promote")
+async def post_strategy_promote(strategy_id: str, session: SessionDependency) -> StrategyPromotionResult:
+    return await promote_strategy(session, strategy_id)
 
 
 @router.get("/strategy-templates")

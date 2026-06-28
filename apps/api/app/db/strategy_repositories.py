@@ -6,8 +6,10 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db.models import (
     AssetORM,
+    BacktestRunORM,
     DatasetORM,
     FeatureSnapshotORM,
     SignalORM,
@@ -17,10 +19,17 @@ from app.db.models import (
 )
 from app.db.repositories import _new_id, create_audit_event
 from maelstromhub_core import (
+    BacktestEvaluation,
+    BacktestRun,
+    BacktestStatus,
+    BacktestVerdict,
     Signal,
     SignalRunResult,
     SignalSide,
+    Strategy,
     StrategyParameterValue,
+    StrategyPromotionResult,
+    StrategyStatus,
     StrategyTemplate,
     StrategyVersion,
     StrategyVersionCreate,
@@ -128,6 +137,28 @@ async def list_strategy_versions(session: AsyncSession, strategy_id: str) -> lis
         .order_by(StrategyVersionORM.version_number.desc())
     )
     return [StrategyVersion.model_validate(version) for version in result.scalars()]
+
+
+async def promote_strategy(session: AsyncSession, strategy_id: str) -> StrategyPromotionResult:
+    strategy = await _get_or_404(session, StrategyORM, strategy_id)
+    from_status = StrategyStatus(strategy.status)
+    if from_status == StrategyStatus.DRAFT:
+        return await _promote_draft_to_backtested(session, strategy, from_status)
+    if from_status == StrategyStatus.BACKTESTED:
+        return await _block_strategy_promotion(
+            session,
+            strategy,
+            from_status,
+            StrategyStatus.PAPER_TRADING,
+            ["Paper Trading is not implemented yet. Keep this strategy in Backtested until the paper-trading gate ships."],
+        )
+    return await _block_strategy_promotion(
+        session,
+        strategy,
+        from_status,
+        from_status,
+        [f"Promotion from {from_status.value} is not supported by the current lifecycle gate."],
+    )
 
 
 async def run_strategy_version_signals(session: AsyncSession, version_id: str) -> SignalRunResult:
@@ -348,6 +379,173 @@ def _signal_to_schema(signal: SignalORM) -> Signal:
         suggested_size=float(signal.suggested_size),
         metadata=signal.metadata_json,
         created_at=signal.created_at,
+    )
+
+
+async def _promote_draft_to_backtested(
+    session: AsyncSession,
+    strategy: StrategyORM,
+    from_status: StrategyStatus,
+) -> StrategyPromotionResult:
+    runs = await _list_succeeded_backtests_for_strategy(session, strategy.id)
+    if not runs:
+        return await _block_strategy_promotion(
+            session,
+            strategy,
+            from_status,
+            StrategyStatus.BACKTESTED,
+            ["Run at least one successful backtest before promoting this draft."],
+        )
+
+    evaluated = [(run, _evaluate_backtest_run(run)) for run in runs]
+    passing = [(run, evaluation) for run, evaluation in evaluated if evaluation.verdict == BacktestVerdict.READY]
+    selected_run, selected_evaluation = max(
+        passing or evaluated,
+        key=lambda item: (_verdict_rank(item[1].verdict), item[1].risk_adjusted_score),
+    )
+    if not passing:
+        return await _block_strategy_promotion(
+            session,
+            strategy,
+            from_status,
+            StrategyStatus.BACKTESTED,
+            selected_evaluation.reasons,
+            backtest_run=_run_to_schema(selected_run),
+            evaluation=selected_evaluation,
+        )
+
+    strategy.status = StrategyStatus.BACKTESTED.value
+    await create_audit_event(
+        session,
+        actor="system",
+        action="promoted_strategy_to_backtested",
+        subject=strategy.id,
+        flush=False,
+    )
+    await session.commit()
+    await session.refresh(strategy)
+    return StrategyPromotionResult(
+        strategy=Strategy.model_validate(strategy),
+        promoted=True,
+        from_status=from_status,
+        to_status=StrategyStatus.BACKTESTED,
+        reasons=[],
+        backtest_run=_run_to_schema(selected_run),
+        evaluation=selected_evaluation,
+    )
+
+
+async def _block_strategy_promotion(
+    session: AsyncSession,
+    strategy: StrategyORM,
+    from_status: StrategyStatus,
+    to_status: StrategyStatus,
+    reasons: list[str],
+    *,
+    backtest_run: BacktestRun | None = None,
+    evaluation: BacktestEvaluation | None = None,
+) -> StrategyPromotionResult:
+    await create_audit_event(
+        session,
+        actor="system",
+        action="blocked_strategy_promotion",
+        subject=strategy.id,
+        flush=False,
+    )
+    await session.commit()
+    await session.refresh(strategy)
+    return StrategyPromotionResult(
+        strategy=Strategy.model_validate(strategy),
+        promoted=False,
+        from_status=from_status,
+        to_status=to_status,
+        reasons=reasons,
+        backtest_run=backtest_run,
+        evaluation=evaluation,
+    )
+
+
+async def _list_succeeded_backtests_for_strategy(session: AsyncSession, strategy_id: str) -> list[BacktestRunORM]:
+    result = await session.execute(
+        select(BacktestRunORM)
+        .join(StrategyVersionORM, StrategyVersionORM.id == BacktestRunORM.strategy_version_id)
+        .where(
+            StrategyVersionORM.strategy_id == strategy_id,
+            BacktestRunORM.status == BacktestStatus.SUCCEEDED.value,
+        )
+        .order_by(BacktestRunORM.created_at.desc())
+    )
+    return list(result.scalars())
+
+
+def _evaluate_backtest_run(run: BacktestRunORM) -> BacktestEvaluation:
+    total_return = _metric(run, "total_return")
+    max_drawdown = _metric(run, "max_drawdown")
+    trade_count = int(_metric(run, "trade_count"))
+    reasons: list[str] = []
+    if max_drawdown < settings.promotion_max_drawdown_threshold:
+        reasons.append(
+            "Max drawdown is too deep: "
+            f"{max_drawdown:.2%} is worse than the {settings.promotion_max_drawdown_threshold:.2%} limit."
+        )
+    if trade_count < settings.promotion_min_trade_count:
+        reasons.append(
+            "Trade count is too low: "
+            f"{trade_count} completed trades is below the minimum of {settings.promotion_min_trade_count}."
+        )
+    if total_return < settings.promotion_min_total_return:
+        reasons.append(
+            "Total return is catastrophically negative: "
+            f"{total_return:.2%} is below the {settings.promotion_min_total_return:.2%} floor."
+        )
+    score = _risk_adjusted_score(total_return, max_drawdown)
+    if reasons:
+        verdict = BacktestVerdict.BLOCKED
+    elif total_return <= 0 or score < 1:
+        verdict = BacktestVerdict.REVIEW
+    else:
+        verdict = BacktestVerdict.READY
+    return BacktestEvaluation(
+        verdict=verdict,
+        risk_adjusted_score=score,
+        reasons=reasons,
+        thresholds={
+            "max_drawdown": settings.promotion_max_drawdown_threshold,
+            "min_trade_count": settings.promotion_min_trade_count,
+            "min_total_return": settings.promotion_min_total_return,
+        },
+    )
+
+
+def _metric(run: BacktestRunORM, key: str) -> float:
+    value = run.metrics.get(key)
+    return float(value) if isinstance(value, int | float | str) else 0.0
+
+
+def _risk_adjusted_score(total_return: float, max_drawdown: float) -> float:
+    return total_return / max(abs(max_drawdown), 0.01)
+
+
+def _verdict_rank(verdict: BacktestVerdict) -> int:
+    return {
+        BacktestVerdict.BLOCKED: 0,
+        BacktestVerdict.REVIEW: 1,
+        BacktestVerdict.READY: 2,
+    }[verdict]
+
+
+def _run_to_schema(run: BacktestRunORM) -> BacktestRun:
+    return BacktestRun(
+        id=run.id,
+        strategy_version_id=run.strategy_version_id,
+        dataset_id=run.dataset_id,
+        status=BacktestStatus(run.status),
+        starting_balance=float(run.starting_balance),
+        fee_bps=float(run.fee_bps),
+        slippage_bps=float(run.slippage_bps),
+        created_at=run.created_at,
+        finished_at=run.finished_at,
+        metrics=run.metrics,
     )
 
 
