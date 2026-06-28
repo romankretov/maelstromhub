@@ -34,6 +34,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://maelstromhub:maelstromhub@postgres:5432/maelstromhub}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PYTHONPATH: /app/apps/api:/app/packages/core
     ports:
       - "8000:8000"
     depends_on:
@@ -41,9 +42,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     volumes:
-      - ./apps/api:/app/apps/api
-      - ./packages/core:/app/packages/core
+      - ./apps/api:/app/apps/api:z
+      - ./packages/core:/app/packages/core:z
 
   worker:
     build:
@@ -52,14 +64,18 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://maelstromhub:maelstromhub@postgres:5432/maelstromhub}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PYTHONPATH: /app/apps/worker:/app/apps/api:/app/packages/core
     depends_on:
+      api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
-      - ./apps/worker:/app/apps/worker
-      - ./packages/core:/app/packages/core
+      - ./apps/worker:/app/apps/worker:z
+      - ./apps/api:/app/apps/api:z
+      - ./packages/core:/app/packages/core:z
 
   web:
     build:
@@ -70,11 +86,15 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     volumes:
-      - ./apps/web:/app/apps/web
-      - /app/apps/web/node_modules
+      - ./apps/web:/app/apps/web:z
+      - web-node-modules:/app/node_modules
+      - web-next-cache:/app/apps/web/.next
 
 volumes:
   postgres-data:
   redis-data:
+  web-node-modules:
+  web-next-cache:

@@ -49,6 +49,21 @@ Stop the stack:
 npm run compose:down
 ```
 
+Docker dev troubleshooting:
+
+- After Dockerfile or dependency changes, reset and rebuild with:
+
+  ```bash
+  docker compose down -v
+  docker compose build --no-cache
+  docker compose up
+  ```
+
+- The API container runs from `/app/apps/api` with `PYTHONPATH=/app/apps/api:/app/packages/core`, so `uvicorn app.main:app` imports the bind-mounted API package during development.
+- The worker container runs from `/app/apps/worker` with `PYTHONPATH=/app/apps/worker:/app/apps/api:/app/packages/core`, so `python -m worker.main` can import both the worker and API repository modules.
+- On Fedora and other SELinux-enabled hosts, bind mounts may otherwise show up as `EACCES` inside containers. The Compose file uses shared `:z` relabeling on source bind mounts so the web container can read `apps/web/package.json` and Python containers can read mounted source. Shared relabeling is intentional because `apps/api` and `packages/core` are mounted into more than one service.
+- The web container runs npm from `/app` using the workspace command and keeps `node_modules` plus `.next` on Docker-managed volumes. If dependencies or generated Next files get into a bad state, `docker compose down -v` recreates those volumes.
+
 ## Run pieces locally
 
 Web:

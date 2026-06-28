@@ -1,5 +1,4 @@
 import logging
-import time
 
 import asyncio
 
@@ -23,10 +22,14 @@ async def run_once() -> None:
 
 
 def main() -> None:
+    asyncio.run(run_forever())
+
+
+async def run_forever() -> None:
     logger.info("starting worker", extra={"redis_url": settings.redis_url})
     while True:
-        asyncio.run(run_once())
-        time.sleep(settings.poll_interval_seconds)
+        await run_once()
+        await asyncio.sleep(settings.poll_interval_seconds)
 
 
 if __name__ == "__main__":

@@ -15,4 +15,4 @@ WORKDIR /app
 
 EXPOSE 3000
 
-CMD ["npm", "--workspace", "apps/web", "run", "dev", "--", "--hostname", "0.0.0.0"]
+CMD ["npm", "--workspace", "apps/web", "run", "dev"]
