@@ -1,15 +1,21 @@
 from typing import Any, TypeVar
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from datetime import UTC
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssetORM, DatasetORM, ExperimentORM, FeatureORM, TimeframeORM
+from app.db.models import AssetORM, CandleORM, DatasetORM, ExperimentORM, FeatureORM, TimeframeORM
 from app.db.repositories import _new_id, create_audit_event
+from app.providers.candles import CandleProvider, ProviderCandle, default_backfill_window
 from maelstromhub_core import (
     Asset,
     AssetCreate,
     AssetUpdate,
+    Candle,
+    CandleBackfillRequest,
+    CandleBackfillResult,
     Dataset,
     DatasetCreate,
     DatasetUpdate,
@@ -137,6 +143,117 @@ async def delete_dataset(session: AsyncSession, dataset_id: str) -> None:
     dataset = await _get_or_404(session, DatasetORM, dataset_id)
     await session.delete(dataset)
     await session.commit()
+
+
+async def list_dataset_candles(session: AsyncSession, dataset_id: str) -> list[Candle]:
+    await _get_or_404(session, DatasetORM, dataset_id)
+    result = await session.execute(
+        select(CandleORM)
+        .where(CandleORM.dataset_id == dataset_id)
+        .order_by(CandleORM.opened_at.asc())
+    )
+    return [Candle.model_validate(candle) for candle in result.scalars()]
+
+
+async def backfill_dataset_candles(
+    session: AsyncSession,
+    dataset_id: str,
+    payload: CandleBackfillRequest,
+    provider: CandleProvider,
+) -> CandleBackfillResult:
+    dataset = await _get_or_404(session, DatasetORM, dataset_id)
+    asset = await _get_or_404(session, AssetORM, dataset.asset_id)
+    timeframe = await _get_or_404(session, TimeframeORM, dataset.timeframe_id)
+    start_time, end_time = _resolve_backfill_window(payload)
+
+    try:
+        provider_candles = await provider.get_historical_candles(
+            symbol=asset.symbol,
+            interval=timeframe.interval,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        inserted, updated = await _upsert_candles(session, dataset.id, provider_candles)
+        await _refresh_dataset_candle_stats(session, dataset)
+        dataset.last_ingestion_status = "success"
+        dataset.last_ingestion_error = None
+        await create_audit_event(
+            session,
+            actor="system",
+            action="backfilled_candles",
+            subject=dataset.id,
+            flush=False,
+        )
+        await session.commit()
+        await session.refresh(dataset)
+        return CandleBackfillResult(
+            dataset_id=dataset.id,
+            inserted=inserted,
+            updated=updated,
+            total_candles=dataset.candle_count,
+            latest_candle_timestamp=dataset.latest_candle_timestamp,
+            status="success",
+        )
+    except Exception as error:
+        dataset.last_ingestion_status = "failed"
+        dataset.last_ingestion_error = str(error)
+        await session.commit()
+        raise
+
+
+def _resolve_backfill_window(payload: CandleBackfillRequest):
+    if payload.start_time and payload.end_time:
+        return payload.start_time, payload.end_time
+    default_start, default_end = default_backfill_window()
+    return payload.start_time or default_start, payload.end_time or default_end
+
+
+async def _upsert_candles(
+    session: AsyncSession,
+    dataset_id: str,
+    provider_candles: list[ProviderCandle],
+) -> tuple[int, int]:
+    inserted = 0
+    updated = 0
+    for provider_candle in provider_candles:
+        opened_at = provider_candle.opened_at.astimezone(UTC)
+        existing_result = await session.execute(
+            select(CandleORM).where(
+                CandleORM.dataset_id == dataset_id,
+                CandleORM.opened_at == opened_at,
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        values = {
+            "open": provider_candle.open,
+            "high": provider_candle.high,
+            "low": provider_candle.low,
+            "close": provider_candle.close,
+            "volume": provider_candle.volume,
+            "trade_count": provider_candle.trade_count,
+        }
+        if existing is None:
+            session.add(
+                CandleORM(
+                    id=_new_id("candle"),
+                    dataset_id=dataset_id,
+                    opened_at=opened_at,
+                    **values,
+                )
+            )
+            inserted += 1
+        else:
+            _apply_updates(existing, values)
+            updated += 1
+    await session.flush()
+    return inserted, updated
+
+
+async def _refresh_dataset_candle_stats(session: AsyncSession, dataset: DatasetORM) -> None:
+    count_result = await session.execute(select(func.count()).select_from(CandleORM).where(CandleORM.dataset_id == dataset.id))
+    latest_result = await session.execute(select(func.max(CandleORM.opened_at)).where(CandleORM.dataset_id == dataset.id))
+    dataset.candle_count = int(count_result.scalar_one() or 0)
+    dataset.latest_candle_timestamp = latest_result.scalar_one_or_none()
 
 
 async def list_features(session: AsyncSession) -> list[Feature]:

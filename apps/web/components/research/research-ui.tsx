@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Database, FlaskConical, Layers, Microscope, Plus, Timer } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -14,12 +14,16 @@ import {
   createExperiment,
   createFeature,
   createTimeframe,
+  backfillDatasetCandles,
   getAssets,
+  getDataset,
+  getDatasetCandles,
   getDatasets,
   getExperiments,
   getFeatures,
   getTimeframes,
   type Asset,
+  type Candle,
   type Dataset,
   type Experiment,
   type Feature,
@@ -310,7 +314,7 @@ export function DatasetsClient() {
       content={
         <ListSection loading={loading} error={error} emptyIcon={Layers} emptyTitle="No datasets yet" emptyDescription="Create assets and timeframes first, then define a dataset.">
           {datasets.map((dataset) => (
-            <RecordCard key={dataset.id} title={dataset.name} badge="Dataset" description={descriptionValue(dataset.description)} createdAt={dataset.created_at} meta={datasetMeta(dataset, assets, timeframes)} />
+            <RecordCard key={dataset.id} title={dataset.name} badge="Dataset" description={descriptionValue(dataset.description)} createdAt={dataset.created_at} meta={datasetMeta(dataset, assets, timeframes)} href={`/research/datasets/${dataset.id}`} />
           ))}
         </ListSection>
       }
@@ -469,6 +473,117 @@ export function ExperimentsClient() {
   );
 }
 
+export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
+  const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [backfilling, setBackfilling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadDataset = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [loadedDataset, loadedCandles] = await Promise.all([
+        getDataset(datasetId),
+        getDatasetCandles(datasetId),
+      ]);
+      setDataset(loadedDataset);
+      setCandles(loadedCandles);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load dataset.");
+    } finally {
+      setLoading(false);
+    }
+  }, [datasetId]);
+
+  useEffect(() => {
+    void loadDataset();
+  }, [loadDataset]);
+
+  async function handleBackfill() {
+    setBackfilling(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await backfillDatasetCandles(datasetId);
+      const [loadedDataset, loadedCandles] = await Promise.all([
+        getDataset(datasetId),
+        getDatasetCandles(datasetId),
+      ]);
+      setDataset(loadedDataset);
+      setCandles(loadedCandles);
+      setNotice(`Backfill complete: ${result.inserted} inserted, ${result.updated} updated.`);
+    } catch (backfillError) {
+      setError(backfillError instanceof Error ? backfillError.message : "Unable to backfill candles.");
+    } finally {
+      setBackfilling(false);
+    }
+  }
+
+  if (loading) return <LoadingState label="Loading dataset" />;
+  if (error && !dataset) return <ErrorState message={error} />;
+  if (!dataset) {
+    return (
+      <FeedbackState
+        icon={Layers}
+        title="Dataset not found"
+        description="The dataset could not be loaded from the API."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {error ? <ErrorState message={error} /> : null}
+      {notice ? <section className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">{notice}</section> : null}
+
+      <section className="grid gap-4 md:grid-cols-4">
+        <MetricCard label="Candles" value={dataset.candle_count.toString()} />
+        <MetricCard label="Ingestion" value={dataset.last_ingestion_status ?? "not started"} />
+        <MetricCard label="Latest candle" value={dataset.latest_candle_timestamp ? formatDate(dataset.latest_candle_timestamp) : "none"} />
+        <MetricCard label="Errors" value={dataset.last_ingestion_error ? "present" : "none"} />
+      </section>
+
+      <section className="rounded-lg border bg-card p-5">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+          <div>
+            <h2 className="text-lg font-semibold">{dataset.name}</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              {descriptionValue(dataset.description)}
+            </p>
+            <p className="mt-3 text-xs text-muted-foreground">Created {formatDate(dataset.created_at)}</p>
+          </div>
+          <Button onClick={handleBackfill} disabled={backfilling}>
+            {backfilling ? "Backfilling" : "Backfill candles"}
+          </Button>
+        </div>
+      </section>
+
+      {candles.length === 0 ? (
+        <FeedbackState
+          icon={Layers}
+          title="No candles in this dataset"
+          description="Run a candle backfill to fetch historical Hyperliquid candles for this dataset's asset and timeframe."
+        />
+      ) : (
+        <section className="rounded-lg border bg-card p-5">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <h2 className="text-base font-semibold">Close price</h2>
+            <p className="text-sm text-muted-foreground">{candles.length} candles</p>
+          </div>
+          <CandleChart candles={candles} />
+          <div className="mt-4 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+            <span>First: {formatDate(candles[0].opened_at)}</span>
+            <span>Last: {formatDate(candles[candles.length - 1].opened_at)}</span>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function ResearchFormLayout({ form, content }: { form: ReactNode; content: ReactNode }) {
   return <div className="grid gap-6 lg:grid-cols-[380px_1fr]">{form}<section className="space-y-4">{content}</section></div>;
 }
@@ -546,11 +661,28 @@ function ListSection({
   return <div className="grid gap-4">{children}</div>;
 }
 
-function RecordCard({ title, badge, description, createdAt, meta }: { title: string; badge: string; description: string; createdAt: string; meta?: string }) {
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-2 truncate text-sm font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function RecordCard({ title, badge, description, createdAt, meta, href }: { title: string; badge: string; description: string; createdAt: string; meta?: string; href?: string }) {
+  const titleNode = href ? (
+    <Link href={href} className="hover:text-primary">
+      {title}
+    </Link>
+  ) : (
+    title
+  );
+
   return (
     <article className="rounded-lg border bg-card p-5">
       <div className="flex items-start justify-between gap-4">
-        <h2 className="font-semibold">{title}</h2>
+        <h2 className="font-semibold">{titleNode}</h2>
         <span className="shrink-0 rounded-md border px-2 py-1 text-xs text-muted-foreground">{badge}</span>
       </div>
       <p className="mt-3 text-sm leading-6 text-muted-foreground">{description}</p>
@@ -559,6 +691,31 @@ function RecordCard({ title, badge, description, createdAt, meta }: { title: str
         <span className="rounded-md border px-2 py-1">{formatDate(createdAt)}</span>
       </div>
     </article>
+  );
+}
+
+function CandleChart({ candles }: { candles: Candle[] }) {
+  const width = 720;
+  const height = 240;
+  const padding = 16;
+  const closes = candles.map((candle) => candle.close);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const points = candles.map((candle, index) => {
+    const x = padding + (index / Math.max(candles.length - 1, 1)) * (width - padding * 2);
+    const y = height - padding - ((candle.close - min) / range) * (height - padding * 2);
+    return `${x},${y}`;
+  });
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-background">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-64 w-full" role="img" aria-label="Dataset candle close price chart">
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="hsl(var(--border))" />
+        <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="hsl(var(--border))" />
+        <polyline fill="none" stroke="hsl(var(--primary))" strokeWidth="2" points={points.join(" ")} />
+      </svg>
+    </div>
   );
 }
 

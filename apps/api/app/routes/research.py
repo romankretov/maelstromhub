@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.research_repositories import (
+    backfill_dataset_candles,
     create_asset,
     create_dataset,
     create_experiment,
@@ -19,6 +20,7 @@ from app.db.research_repositories import (
     get_experiment,
     get_feature,
     get_timeframe,
+    list_dataset_candles,
     list_assets,
     list_datasets,
     list_experiments,
@@ -31,10 +33,14 @@ from app.db.research_repositories import (
     update_timeframe,
 )
 from app.db.session import get_session
+from app.providers.candles import CandleProvider, get_candle_provider
 from maelstromhub_core import (
     Asset,
     AssetCreate,
     AssetUpdate,
+    Candle,
+    CandleBackfillRequest,
+    CandleBackfillResult,
     Dataset,
     DatasetCreate,
     DatasetUpdate,
@@ -52,6 +58,7 @@ from maelstromhub_core import (
 router = APIRouter()
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
+CandleProviderDependency = Annotated[CandleProvider, Depends(get_candle_provider)]
 
 
 @router.get("/assets")
@@ -114,6 +121,21 @@ async def get_datasets(session: SessionDependency) -> dict[str, list[Dataset]]:
 @router.post("/datasets", status_code=201)
 async def post_dataset(payload: DatasetCreate, session: SessionDependency) -> Dataset:
     return await create_dataset(session, payload)
+
+
+@router.post("/datasets/{dataset_id}/backfill-candles")
+async def post_dataset_candle_backfill(
+    dataset_id: str,
+    payload: CandleBackfillRequest,
+    session: SessionDependency,
+    provider: CandleProviderDependency,
+) -> CandleBackfillResult:
+    return await backfill_dataset_candles(session, dataset_id, payload, provider)
+
+
+@router.get("/datasets/{dataset_id}/candles")
+async def get_dataset_candles(dataset_id: str, session: SessionDependency) -> dict[str, list[Candle]]:
+    return {"candles": await list_dataset_candles(session, dataset_id)}
 
 
 @router.get("/datasets/{dataset_id}")

@@ -53,6 +53,23 @@ export type Dataset = {
   timeframe_id: string;
   name: string;
   description: string | null;
+  latest_candle_timestamp: string | null;
+  candle_count: number;
+  last_ingestion_status: string | null;
+  last_ingestion_error: string | null;
+  created_at: string;
+};
+
+export type Candle = {
+  id: string;
+  dataset_id: string;
+  opened_at: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  trade_count: number | null;
   created_at: string;
 };
 
@@ -107,6 +124,20 @@ export type DatasetCreate = {
   timeframe_id: string;
   name: string;
   description?: string | null;
+};
+
+export type CandleBackfillRequest = {
+  start_time?: string | null;
+  end_time?: string | null;
+};
+
+export type CandleBackfillResult = {
+  dataset_id: string;
+  inserted: number;
+  updated: number;
+  total_candles: number;
+  latest_candle_timestamp: string | null;
+  status: string;
 };
 
 export type FeatureCreate = {
@@ -202,8 +233,27 @@ export async function getDatasets(): Promise<Dataset[]> {
   return body.datasets;
 }
 
+export async function getDataset(datasetId: string): Promise<Dataset> {
+  return request<Dataset>(`/datasets/${datasetId}`);
+}
+
 export async function createDataset(payload: DatasetCreate): Promise<Dataset> {
   return request<Dataset>("/datasets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getDatasetCandles(datasetId: string): Promise<Candle[]> {
+  const body = await request<{ candles: Candle[] }>(`/datasets/${datasetId}/candles`);
+  return body.candles;
+}
+
+export async function backfillDatasetCandles(
+  datasetId: string,
+  payload: CandleBackfillRequest = {},
+): Promise<CandleBackfillResult> {
+  return request<CandleBackfillResult>(`/datasets/${datasetId}/backfill-candles`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

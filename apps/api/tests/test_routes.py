@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import app
+from app.providers.candles import ProviderCandle, get_candle_provider
 
 
 class AsyncSessionAdapter:
@@ -66,6 +67,38 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
 
     app.dependency_overrides.clear()
     engine.dispose()
+
+
+class FakeCandleProvider:
+    name = "fake"
+
+    async def get_historical_candles(self, **_: Any) -> list[ProviderCandle]:
+        from datetime import UTC, datetime
+
+        return [
+            ProviderCandle(
+                opened_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                open=100.0,
+                high=110.0,
+                low=95.0,
+                close=105.0,
+                volume=12.5,
+                trade_count=4,
+            ),
+            ProviderCandle(
+                opened_at=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+                open=105.0,
+                high=112.0,
+                low=102.0,
+                close=109.0,
+                volume=15.0,
+                trade_count=6,
+            ),
+        ]
+
+
+async def get_fake_candle_provider() -> FakeCandleProvider:
+    return FakeCandleProvider()
 
 
 @pytest.mark.anyio
@@ -235,3 +268,28 @@ async def test_research_update_get_and_delete(client: httpx.AsyncClient) -> None
     assert get_response.status_code == 200
     assert delete_response.status_code == 204
     assert missing_response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_backfill_dataset_candles_is_idempotent_and_audited(client: httpx.AsyncClient) -> None:
+    _, _, dataset = await create_research_chain(client)
+    app.dependency_overrides[get_candle_provider] = get_fake_candle_provider
+
+    first_response = await client.post(f"/datasets/{dataset['id']}/backfill-candles", json={})
+    second_response = await client.post(f"/datasets/{dataset['id']}/backfill-candles", json={})
+    candles_response = await client.get(f"/datasets/{dataset['id']}/candles")
+    dataset_response = await client.get(f"/datasets/{dataset['id']}")
+    audit_response = await client.get("/audit-events")
+
+    assert first_response.status_code == 200
+    assert first_response.json()["inserted"] == 2
+    assert first_response.json()["updated"] == 0
+    assert second_response.status_code == 200
+    assert second_response.json()["inserted"] == 0
+    assert second_response.json()["updated"] == 2
+    assert candles_response.status_code == 200
+    assert len(candles_response.json()["candles"]) == 2
+    assert candles_response.json()["candles"][0]["close"] == 105.0
+    assert dataset_response.json()["candle_count"] == 2
+    assert dataset_response.json()["last_ingestion_status"] == "success"
+    assert audit_response.json()["audit_events"][0]["action"] == "backfilled_candles"

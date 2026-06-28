@@ -63,6 +63,10 @@ class DatasetCreate(DomainModel):
 
 class Dataset(DatasetCreate):
     id: str
+    latest_candle_timestamp: datetime | None = None
+    candle_count: int = 0
+    last_ingestion_status: str | None = None
+    last_ingestion_error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -71,6 +75,33 @@ class DatasetUpdate(DomainModel):
     timeframe_id: str | None = None
     name: str | None = None
     description: str | None = None
+
+
+class Candle(DomainModel):
+    id: str
+    dataset_id: str
+    opened_at: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    trade_count: int | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CandleBackfillRequest(DomainModel):
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+
+
+class CandleBackfillResult(DomainModel):
+    dataset_id: str
+    inserted: int
+    updated: int
+    total_candles: int
+    latest_candle_timestamp: datetime | None = None
+    status: str
 
 
 class FeatureCreate(DomainModel):
