@@ -19,7 +19,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "strategy_templates",
-        sa.Column("id", sa.String(length=80), primary_key=True),
+        sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("name", sa.String(length=160), nullable=False),
         sa.Column("description", sa.Text(), nullable=False),
         sa.Column("required_features", sa.JSON(), nullable=False),
@@ -29,10 +29,10 @@ def upgrade() -> None:
     )
     op.create_table(
         "strategy_versions",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("strategy_id", sa.String(length=36), nullable=False),
-        sa.Column("template_id", sa.String(length=80), nullable=False),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("strategy_id", sa.Uuid(), nullable=False),
+        sa.Column("template_id", sa.Uuid(), nullable=False),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("version_number", sa.Integer(), nullable=False),
         sa.Column("parameters", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -43,10 +43,10 @@ def upgrade() -> None:
     )
     op.create_table(
         "signals",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("strategy_version_id", sa.String(length=36), nullable=False),
-        sa.Column("strategy_id", sa.String(length=36), nullable=False),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("strategy_version_id", sa.Uuid(), nullable=False),
+        sa.Column("strategy_id", sa.Uuid(), nullable=False),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("symbol", sa.String(length=80), nullable=False),
         sa.Column("side", sa.String(length=20), nullable=False),

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -37,9 +38,17 @@ from maelstromhub_core import (
 )
 
 
+SMA_CROSSOVER_TEMPLATE_ID = UUID("3af69744-0317-49ec-8850-b8494d40a1be")
+RSI_MEAN_REVERSION_TEMPLATE_ID = UUID("fc33a083-aabc-4e37-bd46-eb31ac5d5a3c")
+
+TEMPLATE_KEYS = {
+    SMA_CROSSOVER_TEMPLATE_ID: "sma_crossover",
+    RSI_MEAN_REVERSION_TEMPLATE_ID: "rsi_mean_reversion",
+}
+
 TEMPLATE_DEFINITIONS = [
     StrategyTemplate(
-        id="sma_crossover",
+        id=SMA_CROSSOVER_TEMPLATE_ID,
         name="SMA crossover",
         description="Compares short and long moving averages to emit long, short, or flat directional signals.",
         required_features=["sma_20", "sma_50"],
@@ -57,7 +66,7 @@ TEMPLATE_DEFINITIONS = [
         },
     ),
     StrategyTemplate(
-        id="rsi_mean_reversion",
+        id=RSI_MEAN_REVERSION_TEMPLATE_ID,
         name="RSI mean reversion",
         description="Uses RSI thresholds to look for stretched markets that may mean revert.",
         required_features=["rsi_14"],
@@ -95,7 +104,7 @@ async def list_strategy_templates(session: AsyncSession) -> list[StrategyTemplat
 
 async def create_strategy_version(
     session: AsyncSession,
-    strategy_id: str,
+    strategy_id: UUID,
     payload: StrategyVersionCreate,
 ) -> StrategyVersion:
     await ensure_strategy_templates(session)
@@ -109,7 +118,7 @@ async def create_strategy_version(
     next_number = int(next_number_result.scalar_one_or_none() or 0) + 1
     parameters = {**template.default_parameters, **payload.parameters}
     version = StrategyVersionORM(
-        id=_new_id("strategy-version"),
+        id=_new_id(),
         strategy_id=strategy.id,
         template_id=template.id,
         dataset_id=payload.dataset_id,
@@ -131,7 +140,7 @@ async def create_strategy_version(
     return StrategyVersion.model_validate(version)
 
 
-async def list_strategy_versions(session: AsyncSession, strategy_id: str) -> list[StrategyVersion]:
+async def list_strategy_versions(session: AsyncSession, strategy_id: UUID) -> list[StrategyVersion]:
     await _get_or_404(session, StrategyORM, strategy_id)
     result = await session.execute(
         select(StrategyVersionORM)
@@ -141,7 +150,7 @@ async def list_strategy_versions(session: AsyncSession, strategy_id: str) -> lis
     return [StrategyVersion.model_validate(version) for version in result.scalars()]
 
 
-async def promote_strategy(session: AsyncSession, strategy_id: str) -> StrategyPromotionResult:
+async def promote_strategy(session: AsyncSession, strategy_id: UUID) -> StrategyPromotionResult:
     strategy = await _get_or_404(session, StrategyORM, strategy_id)
     from_status = StrategyStatus(strategy.status)
     if from_status == StrategyStatus.DRAFT:
@@ -157,7 +166,7 @@ async def promote_strategy(session: AsyncSession, strategy_id: str) -> StrategyP
     )
 
 
-async def run_strategy_version_signals(session: AsyncSession, version_id: str) -> SignalRunResult:
+async def run_strategy_version_signals(session: AsyncSession, version_id: UUID) -> SignalRunResult:
     version = await _get_or_404(session, StrategyVersionORM, version_id)
     template = await _get_or_404(session, StrategyTemplateORM, version.template_id)
     dataset = await _get_or_404(session, DatasetORM, version.dataset_id)
@@ -200,7 +209,7 @@ async def run_strategy_version_signals(session: AsyncSession, version_id: str) -
     )
 
 
-async def list_strategy_version_signals(session: AsyncSession, version_id: str) -> list[Signal]:
+async def list_strategy_version_signals(session: AsyncSession, version_id: UUID) -> list[Signal]:
     await _get_or_404(session, StrategyVersionORM, version_id)
     result = await session.execute(
         select(SignalORM).where(SignalORM.strategy_version_id == version_id).order_by(SignalORM.timestamp.desc())
@@ -227,7 +236,7 @@ async def ensure_strategy_templates(session: AsyncSession) -> None:
         await session.commit()
 
 
-async def _get_or_404(session: AsyncSession, model: type[Any], item_id: str) -> Any:
+async def _get_or_404(session: AsyncSession, model: type[Any], item_id: UUID) -> Any:
     item = await session.get(model, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Resource not found")
@@ -236,7 +245,7 @@ async def _get_or_404(session: AsyncSession, model: type[Any], item_id: str) -> 
 
 async def _load_aligned_snapshots(
     session: AsyncSession,
-    dataset_id: str,
+    dataset_id: UUID,
     required_features: list[str],
 ) -> list[tuple[datetime, dict[str, float]]]:
     result = await session.execute(
@@ -257,7 +266,7 @@ async def _load_aligned_snapshots(
     ]
 
 
-async def _load_regimes_by_timestamp(session: AsyncSession, dataset_id: str) -> dict[datetime, MarketRegimeSnapshotORM]:
+async def _load_regimes_by_timestamp(session: AsyncSession, dataset_id: UUID) -> dict[datetime, MarketRegimeSnapshotORM]:
     result = await session.execute(
         select(MarketRegimeSnapshotORM)
         .where(MarketRegimeSnapshotORM.dataset_id == dataset_id)
@@ -302,13 +311,14 @@ def _apply_regime_filter(
 
 def _run_template(
     *,
-    template_id: str,
+    template_id: UUID,
     parameters: dict[str, object],
     snapshots: list[tuple[datetime, dict[str, float]]],
 ) -> list[GeneratedSignal]:
-    if template_id == "sma_crossover":
+    template_key = TEMPLATE_KEYS.get(template_id)
+    if template_key == "sma_crossover":
         return [_run_sma_crossover(timestamp, values, parameters) for timestamp, values in snapshots]
-    if template_id == "rsi_mean_reversion":
+    if template_key == "rsi_mean_reversion":
         return [_run_rsi_mean_reversion(timestamp, values, parameters) for timestamp, values in snapshots]
     raise HTTPException(status_code=400, detail=f"Unsupported strategy template: {template_id}")
 
@@ -401,7 +411,7 @@ async def _upsert_signals(
         if existing is None:
             session.add(
                 SignalORM(
-                    id=_new_id("signal"),
+                    id=_new_id(),
                     strategy_version_id=version.id,
                     timestamp=timestamp,
                     **values,
@@ -564,7 +574,7 @@ async def _block_strategy_promotion(
     )
 
 
-async def _list_succeeded_backtests_for_strategy(session: AsyncSession, strategy_id: str) -> list[BacktestRunORM]:
+async def _list_succeeded_backtests_for_strategy(session: AsyncSession, strategy_id: UUID) -> list[BacktestRunORM]:
     result = await session.execute(
         select(BacktestRunORM)
         .join(StrategyVersionORM, StrategyVersionORM.id == BacktestRunORM.strategy_version_id)

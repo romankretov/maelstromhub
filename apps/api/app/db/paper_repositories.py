@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -34,7 +35,7 @@ from maelstromhub_core import (
 
 async def create_paper_account(session: AsyncSession, payload: PaperAccountCreate) -> PaperAccount:
     account = PaperAccountORM(
-        id=_new_id("paper-account"),
+        id=_new_id(),
         name=payload.name,
         starting_balance=payload.starting_balance,
         cash_balance=payload.starting_balance,
@@ -72,7 +73,7 @@ async def create_paper_deployment(session: AsyncSession, payload: PaperDeploymen
         raise HTTPException(status_code=400, detail="Paper account is not active.")
 
     deployment = PaperDeploymentORM(
-        id=_new_id("paper-deployment"),
+        id=_new_id(),
         strategy_id=strategy.id,
         strategy_version_id=version.id,
         dataset_id=version.dataset_id,
@@ -97,12 +98,12 @@ async def list_paper_deployments(session: AsyncSession) -> list[PaperDeployment]
     return [await _deployment_to_schema(session, deployment) for deployment in result.scalars()]
 
 
-async def get_paper_deployment(session: AsyncSession, deployment_id: str) -> PaperDeployment:
+async def get_paper_deployment(session: AsyncSession, deployment_id: UUID) -> PaperDeployment:
     deployment = await _get_or_404(session, PaperDeploymentORM, deployment_id)
     return await _deployment_to_schema(session, deployment)
 
 
-async def step_paper_deployment(session: AsyncSession, deployment_id: str) -> PaperStepResult:
+async def step_paper_deployment(session: AsyncSession, deployment_id: UUID) -> PaperStepResult:
     deployment = await _get_or_404(session, PaperDeploymentORM, deployment_id)
     if deployment.status != PaperDeploymentStatus.RUNNING.value:
         return PaperStepResult(
@@ -177,7 +178,7 @@ async def step_paper_deployment(session: AsyncSession, deployment_id: str) -> Pa
     )
 
 
-async def pause_paper_deployment(session: AsyncSession, deployment_id: str) -> PaperDeployment:
+async def pause_paper_deployment(session: AsyncSession, deployment_id: UUID) -> PaperDeployment:
     deployment = await _get_or_404(session, PaperDeploymentORM, deployment_id)
     if deployment.status == PaperDeploymentStatus.RUNNING.value:
         deployment.status = PaperDeploymentStatus.PAUSED.value
@@ -192,7 +193,7 @@ async def pause_paper_deployment(session: AsyncSession, deployment_id: str) -> P
     return await get_paper_deployment(session, deployment.id)
 
 
-async def stop_paper_deployment(session: AsyncSession, deployment_id: str) -> PaperDeployment:
+async def stop_paper_deployment(session: AsyncSession, deployment_id: UUID) -> PaperDeployment:
     deployment = await _get_or_404(session, PaperDeploymentORM, deployment_id)
     if deployment.status != PaperDeploymentStatus.STOPPED.value:
         deployment.status = PaperDeploymentStatus.STOPPED.value
@@ -216,7 +217,7 @@ async def _next_candle(session: AsyncSession, deployment: PaperDeploymentORM) ->
     return result.scalar_one_or_none()
 
 
-async def _signal_at(session: AsyncSession, version_id: str, timestamp: datetime) -> SignalORM | None:
+async def _signal_at(session: AsyncSession, version_id: UUID, timestamp: datetime) -> SignalORM | None:
     result = await session.execute(
         select(SignalORM).where(
             SignalORM.strategy_version_id == version_id,
@@ -226,7 +227,7 @@ async def _signal_at(session: AsyncSession, version_id: str, timestamp: datetime
     return result.scalar_one_or_none()
 
 
-async def _regime_at(session: AsyncSession, dataset_id: str, timestamp: datetime) -> MarketRegimeSnapshotORM | None:
+async def _regime_at(session: AsyncSession, dataset_id: UUID, timestamp: datetime) -> MarketRegimeSnapshotORM | None:
     result = await session.execute(
         select(MarketRegimeSnapshotORM).where(
             MarketRegimeSnapshotORM.dataset_id == dataset_id,
@@ -245,7 +246,7 @@ def _is_blocked_by_regime(
     return regime.regime_label not in set(allowed_regimes)
 
 
-async def _load_position(session: AsyncSession, deployment_id: str) -> PaperPositionORM | None:
+async def _load_position(session: AsyncSession, deployment_id: UUID) -> PaperPositionORM | None:
     result = await session.execute(select(PaperPositionORM).where(PaperPositionORM.deployment_id == deployment_id))
     return result.scalar_one_or_none()
 
@@ -263,7 +264,7 @@ async def _open_long(
     account.cash_balance = float(account.cash_balance) - notional
     session.add(
         PaperPositionORM(
-            id=_new_id("paper-position"),
+            id=_new_id(),
             deployment_id=deployment.id,
             symbol=signal.symbol,
             quantity=quantity,
@@ -274,7 +275,7 @@ async def _open_long(
     )
     session.add(
         PaperTradeORM(
-            id=_new_id("paper-trade"),
+            id=_new_id(),
             deployment_id=deployment.id,
             timestamp=signal.timestamp,
             symbol=signal.symbol,
@@ -306,7 +307,7 @@ async def _close_position(
     position.realized_pnl = float(position.realized_pnl) + pnl
     session.add(
         PaperTradeORM(
-            id=_new_id("paper-trade"),
+            id=_new_id(),
             deployment_id=deployment.id,
             timestamp=signal.timestamp,
             symbol=position.symbol,
@@ -392,7 +393,7 @@ def _trade_to_schema(trade: PaperTradeORM) -> PaperTrade:
     )
 
 
-async def _get_or_404(session: AsyncSession, model: type[Any], item_id: str) -> Any:
+async def _get_or_404(session: AsyncSession, model: type[Any], item_id: UUID) -> Any:
     item = await session.get(model, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Resource not found")

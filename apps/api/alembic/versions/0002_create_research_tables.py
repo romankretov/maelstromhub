@@ -19,7 +19,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "assets",
-        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("symbol", sa.String(length=40), nullable=False),
         sa.Column("venue", sa.String(length=80), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
@@ -27,7 +27,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "timeframes",
-        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("name", sa.String(length=80), nullable=False),
         sa.Column("interval", sa.String(length=40), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
@@ -35,9 +35,9 @@ def upgrade() -> None:
     )
     op.create_table(
         "datasets",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("asset_id", sa.String(length=36), nullable=False),
-        sa.Column("timeframe_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("asset_id", sa.Uuid(), nullable=False),
+        sa.Column("timeframe_id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.String(length=240), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -46,8 +46,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "features",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.String(length=240), nullable=False),
         sa.Column("values", sa.JSON(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
@@ -56,9 +56,9 @@ def upgrade() -> None:
     )
     op.create_table(
         "experiments",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
-        sa.Column("feature_id", sa.String(length=36), nullable=True),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
+        sa.Column("feature_id", sa.Uuid(), nullable=True),
         sa.Column("name", sa.String(length=240), nullable=False),
         sa.Column("hypothesis", sa.Text(), nullable=False),
         sa.Column("status", sa.String(length=40), nullable=False),

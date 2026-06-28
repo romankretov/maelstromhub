@@ -19,9 +19,9 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "backtest_runs",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("strategy_version_id", sa.String(length=36), nullable=False),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("strategy_version_id", sa.Uuid(), nullable=False),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("status", sa.String(length=40), nullable=False),
         sa.Column("starting_balance", sa.Numeric(24, 10), nullable=False),
         sa.Column("fee_bps", sa.Numeric(12, 6), nullable=False),
@@ -34,8 +34,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "backtest_trades",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("backtest_run_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("backtest_run_id", sa.Uuid(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("symbol", sa.String(length=80), nullable=False),
         sa.Column("side", sa.String(length=20), nullable=False),
@@ -49,8 +49,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "equity_curve_snapshots",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("backtest_run_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("backtest_run_id", sa.Uuid(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("equity", sa.Numeric(24, 10), nullable=False),
         sa.Column("drawdown", sa.Numeric(12, 8), nullable=False),

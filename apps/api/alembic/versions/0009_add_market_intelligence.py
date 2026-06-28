@@ -20,8 +20,8 @@ def upgrade() -> None:
     op.add_column("strategy_versions", sa.Column("allowed_regimes", sa.JSON(), nullable=True))
     op.create_table(
         "market_regime_snapshots",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("trend_regime", sa.String(length=40), nullable=False),
         sa.Column("volatility_regime", sa.String(length=40), nullable=False),

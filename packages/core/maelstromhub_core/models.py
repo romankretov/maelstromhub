@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,7 +28,7 @@ class AssetCreate(DomainModel):
 
 
 class Asset(AssetCreate):
-    id: str
+    id: UUID
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -44,7 +45,7 @@ class TimeframeCreate(DomainModel):
 
 
 class Timeframe(TimeframeCreate):
-    id: str
+    id: UUID
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -55,14 +56,14 @@ class TimeframeUpdate(DomainModel):
 
 
 class DatasetCreate(DomainModel):
-    asset_id: str
-    timeframe_id: str
+    asset_id: UUID
+    timeframe_id: UUID
     name: str
     description: str | None = None
 
 
 class Dataset(DatasetCreate):
-    id: str
+    id: UUID
     latest_candle_timestamp: datetime | None = None
     candle_count: int = 0
     last_ingestion_status: str | None = None
@@ -71,15 +72,15 @@ class Dataset(DatasetCreate):
 
 
 class DatasetUpdate(DomainModel):
-    asset_id: str | None = None
-    timeframe_id: str | None = None
+    asset_id: UUID | None = None
+    timeframe_id: UUID | None = None
     name: str | None = None
     description: str | None = None
 
 
 class Candle(DomainModel):
-    id: str
-    dataset_id: str
+    id: UUID
+    dataset_id: UUID
     opened_at: datetime
     open: float
     high: float
@@ -96,7 +97,7 @@ class CandleBackfillRequest(DomainModel):
 
 
 class CandleBackfillResult(DomainModel):
-    dataset_id: str
+    dataset_id: UUID
     inserted: int
     updated: int
     total_candles: int
@@ -109,8 +110,8 @@ class FeatureComputeRequest(DomainModel):
 
 
 class FeatureSnapshot(DomainModel):
-    id: str
-    dataset_id: str
+    id: UUID
+    dataset_id: UUID
     timestamp: datetime
     feature_name: str
     numeric_value: float
@@ -126,7 +127,7 @@ class FeatureSummaryItem(DomainModel):
 
 
 class FeatureSummary(DomainModel):
-    dataset_id: str
+    dataset_id: UUID
     total_snapshots: int
     latest_timestamp: datetime | None = None
     features: list[FeatureSummaryItem] = Field(default_factory=list)
@@ -155,8 +156,8 @@ class RiskRegime(StrEnum):
 
 
 class MarketRegimeSnapshot(DomainModel):
-    id: str
-    dataset_id: str
+    id: UUID
+    dataset_id: UUID
     timestamp: datetime
     trend_regime: TrendRegime
     volatility_regime: VolatilityRegime
@@ -170,13 +171,13 @@ class MarketRegimeSnapshot(DomainModel):
 
 
 class RegimeComputationResult(DomainModel):
-    dataset_id: str
+    dataset_id: UUID
     snapshots_written: int
     current_regime: MarketRegimeSnapshot | None = None
 
 
 class MarketIntelligence(DomainModel):
-    dataset_id: str
+    dataset_id: UUID
     regime: MarketRegimeSnapshot | None = None
 
 
@@ -193,8 +194,8 @@ class IngestionJobType(StrEnum):
 
 
 class IngestionJob(DomainModel):
-    id: str
-    dataset_id: str
+    id: UUID
+    dataset_id: UUID
     job_type: IngestionJobType = IngestionJobType.CANDLE_BACKFILL
     status: IngestionJobStatus
     requested_start: datetime | None = None
@@ -208,19 +209,19 @@ class IngestionJob(DomainModel):
 
 
 class FeatureCreate(DomainModel):
-    dataset_id: str
+    dataset_id: UUID
     name: str
     values: dict[str, float] = Field(default_factory=dict)
     description: str | None = None
 
 
 class Feature(FeatureCreate):
-    id: str
+    id: UUID
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class FeatureUpdate(DomainModel):
-    dataset_id: str | None = None
+    dataset_id: UUID | None = None
     name: str | None = None
     values: dict[str, float] | None = None
     description: str | None = None
@@ -234,25 +235,25 @@ class ExperimentStatus(StrEnum):
 
 
 class ExperimentCreate(DomainModel):
-    dataset_id: str
+    dataset_id: UUID
     name: str
     hypothesis: str
-    feature_id: str | None = None
+    feature_id: UUID | None = None
     notes: str | None = None
     metrics: dict[str, float] = Field(default_factory=dict)
 
 
 class Experiment(ExperimentCreate):
-    id: str
+    id: UUID
     status: ExperimentStatus = ExperimentStatus.DRAFT
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ExperimentUpdate(DomainModel):
-    dataset_id: str | None = None
+    dataset_id: UUID | None = None
     name: str | None = None
     hypothesis: str | None = None
-    feature_id: str | None = None
+    feature_id: UUID | None = None
     notes: str | None = None
     metrics: dict[str, float] | None = None
     status: ExperimentStatus | None = None
@@ -274,18 +275,18 @@ class IdeaCreate(DomainModel):
 
 
 class Idea(IdeaCreate):
-    id: str
+    id: UUID
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class StrategyCreate(DomainModel):
     name: str
-    source_idea_id: str | None = None
+    source_idea_id: UUID | None = None
     description: str
 
 
 class Strategy(StrategyCreate):
-    id: str
+    id: UUID
     status: StrategyStatus = StrategyStatus.DRAFT
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -300,7 +301,7 @@ StrategyParameters = dict[str, int | float | str | bool | None]
 
 
 class StrategyTemplate(DomainModel):
-    id: str
+    id: UUID
     name: str
     description: str
     required_features: list[str] = Field(default_factory=list)
@@ -310,15 +311,15 @@ class StrategyTemplate(DomainModel):
 
 
 class StrategyVersionCreate(DomainModel):
-    template_id: str
-    dataset_id: str
+    template_id: UUID
+    dataset_id: UUID
     parameters: StrategyParameters = Field(default_factory=dict)
     allowed_regimes: list[str] | None = None
 
 
 class StrategyVersion(StrategyVersionCreate):
-    id: str
-    strategy_id: str
+    id: UUID
+    strategy_id: UUID
     version_number: int
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -330,10 +331,10 @@ class SignalSide(StrEnum):
 
 
 class Signal(DomainModel):
-    id: str
-    strategy_version_id: str
-    strategy_id: str
-    dataset_id: str
+    id: UUID
+    strategy_version_id: UUID
+    strategy_id: UUID
+    dataset_id: UUID
     timestamp: datetime
     symbol: str
     side: SignalSide
@@ -345,7 +346,7 @@ class Signal(DomainModel):
 
 
 class SignalRunResult(DomainModel):
-    strategy_version_id: str
+    strategy_version_id: UUID
     signals_written: int
     total_signals: int
 
@@ -371,8 +372,8 @@ class BacktestMetrics(DomainModel):
 
 
 class BacktestTrade(DomainModel):
-    id: str
-    backtest_run_id: str
+    id: UUID
+    backtest_run_id: UUID
     timestamp: datetime
     symbol: str
     side: str
@@ -385,17 +386,17 @@ class BacktestTrade(DomainModel):
 
 
 class EquityCurveSnapshot(DomainModel):
-    id: str
-    backtest_run_id: str
+    id: UUID
+    backtest_run_id: UUID
     timestamp: datetime
     equity: float
     drawdown: float
 
 
 class BacktestRun(DomainModel):
-    id: str
-    strategy_version_id: str
-    dataset_id: str
+    id: UUID
+    strategy_version_id: UUID
+    dataset_id: UUID
     status: BacktestStatus
     starting_balance: float
     fee_bps: float
@@ -450,7 +451,7 @@ class PaperAccountCreate(DomainModel):
 
 
 class PaperAccount(DomainModel):
-    id: str
+    id: UUID
     name: str
     starting_balance: float
     cash_balance: float
@@ -460,14 +461,14 @@ class PaperAccount(DomainModel):
 
 
 class PaperDeploymentCreate(DomainModel):
-    strategy_id: str
-    strategy_version_id: str
-    paper_account_id: str
+    strategy_id: UUID
+    strategy_version_id: UUID
+    paper_account_id: UUID
 
 
 class PaperTrade(DomainModel):
-    id: str
-    deployment_id: str
+    id: UUID
+    deployment_id: UUID
     timestamp: datetime
     symbol: str
     side: str
@@ -479,8 +480,8 @@ class PaperTrade(DomainModel):
 
 
 class PaperPosition(DomainModel):
-    id: str
-    deployment_id: str
+    id: UUID
+    deployment_id: UUID
     symbol: str
     quantity: float
     average_entry_price: float
@@ -489,11 +490,11 @@ class PaperPosition(DomainModel):
 
 
 class PaperDeployment(DomainModel):
-    id: str
-    strategy_id: str
-    strategy_version_id: str
-    dataset_id: str
-    paper_account_id: str
+    id: UUID
+    strategy_id: UUID
+    strategy_version_id: UUID
+    dataset_id: UUID
+    paper_account_id: UUID
     status: PaperDeploymentStatus
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     stopped_at: datetime | None = None
@@ -510,7 +511,7 @@ class PaperStepResult(DomainModel):
 
 
 class AuditEvent(DomainModel):
-    id: str
+    id: UUID
     actor: str
     action: str
     subject: str
@@ -518,7 +519,7 @@ class AuditEvent(DomainModel):
 
 
 class ResearchRun(DomainModel):
-    id: str
+    id: UUID
     name: str
     status: ResearchRunStatus = ResearchRunStatus.PENDING
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

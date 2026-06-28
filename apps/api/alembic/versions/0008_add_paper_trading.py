@@ -19,7 +19,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "paper_accounts",
-        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("name", sa.String(length=240), nullable=False),
         sa.Column("starting_balance", sa.Numeric(24, 10), nullable=False),
         sa.Column("cash_balance", sa.Numeric(24, 10), nullable=False),
@@ -29,11 +29,11 @@ def upgrade() -> None:
     )
     op.create_table(
         "paper_deployments",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("strategy_id", sa.String(length=36), nullable=False),
-        sa.Column("strategy_version_id", sa.String(length=36), nullable=False),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
-        sa.Column("paper_account_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("strategy_id", sa.Uuid(), nullable=False),
+        sa.Column("strategy_version_id", sa.Uuid(), nullable=False),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
+        sa.Column("paper_account_id", sa.Uuid(), nullable=False),
         sa.Column("status", sa.String(length=40), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("stopped_at", sa.DateTime(timezone=True), nullable=True),
@@ -45,8 +45,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "paper_trades",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("deployment_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("deployment_id", sa.Uuid(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("symbol", sa.String(length=80), nullable=False),
         sa.Column("side", sa.String(length=20), nullable=False),
@@ -59,8 +59,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "paper_positions",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("deployment_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("deployment_id", sa.Uuid(), nullable=False),
         sa.Column("symbol", sa.String(length=80), nullable=False),
         sa.Column("quantity", sa.Numeric(24, 10), nullable=False),
         sa.Column("average_entry_price", sa.Numeric(24, 10), nullable=False),

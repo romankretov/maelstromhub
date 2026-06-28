@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -21,9 +22,11 @@ from app.db.research_repositories import (
     run_ingestion_job,
 )
 from app.db.models import BacktestRunORM, CandleORM, FeatureSnapshotORM, MarketRegimeSnapshotORM, SignalORM, StrategyORM
+from app.db.paper_repositories import create_paper_account, create_paper_deployment
 from app.db.repositories import create_strategy
 from app.db.session import get_session
 from app.db.strategy_repositories import (
+    SMA_CROSSOVER_TEMPLATE_ID,
     create_strategy_version,
     list_strategy_version_signals,
     run_strategy_version_signals,
@@ -36,6 +39,9 @@ from maelstromhub_core import (
     CandleBackfillRequest,
     DatasetCreate,
     FeatureComputeRequest,
+    IdeaCreate,
+    PaperAccountCreate,
+    PaperDeploymentCreate,
     TrendRegime,
     StrategyCreate,
     StrategyVersionCreate,
@@ -169,7 +175,7 @@ async def test_create_idea_persists_and_audits(client: httpx.AsyncClient) -> Non
 
     assert response.status_code == 201
     idea = response.json()
-    assert idea["id"].startswith("idea-")
+    assert UUID(idea["id"])
     assert idea["title"] == "Funding rate mean reversion"
 
     list_response = await client.get("/ideas")
@@ -203,7 +209,7 @@ async def test_create_strategy_draft_from_idea(client: httpx.AsyncClient) -> Non
 
     assert response.status_code == 201
     strategy = response.json()
-    assert strategy["id"].startswith("strategy-")
+    assert UUID(strategy["id"])
     assert strategy["status"] == "Draft"
     assert strategy["source_idea_id"] == idea["id"]
 
@@ -245,10 +251,11 @@ async def test_strategy_template_and_version_routes(client: httpx.AsyncClient) -
 
     templates_response = await client.get("/strategy-templates")
     templates = templates_response.json()["strategy_templates"]
+    sma_template = next(template for template in templates if template["name"] == "SMA crossover")
     version_response = await client.post(
         f"/strategies/{strategy['id']}/versions",
         json={
-            "template_id": "sma_crossover",
+            "template_id": sma_template["id"],
             "dataset_id": dataset["id"],
             "parameters": {"confidence": 0.8, "suggested_size": 0.5},
         },
@@ -259,7 +266,7 @@ async def test_strategy_template_and_version_routes(client: httpx.AsyncClient) -
     signals_response = await client.get(f"/strategy-versions/{version['id']}/signals")
 
     assert templates_response.status_code == 200
-    assert {template["id"] for template in templates} == {"sma_crossover", "rsi_mean_reversion"}
+    assert {template["name"] for template in templates} == {"SMA crossover", "RSI mean reversion"}
     assert version_response.status_code == 201
     assert version["version_number"] == 1
     assert version["parameters"]["confidence"] == 0.8
@@ -341,8 +348,8 @@ async def test_research_crud_chain(client: httpx.AsyncClient) -> None:
 
     assert feature_response.status_code == 201
     assert experiment_response.status_code == 201
-    assert asset["id"].startswith("asset-")
-    assert timeframe["id"].startswith("timeframe-")
+    assert UUID(asset["id"])
+    assert UUID(timeframe["id"])
     assert dataset["asset_id"] == asset["id"]
     assert feature["dataset_id"] == dataset["id"]
     assert experiment["status"] == "Draft"
@@ -382,7 +389,7 @@ async def test_backfill_endpoint_queues_ingestion_job(client: httpx.AsyncClient)
     audit_response = await client.get("/audit-events")
 
     assert response.status_code == 200
-    assert job["id"].startswith("ingestion-job-")
+    assert UUID(job["id"])
     assert job["status"] == "queued"
     assert job_response.json()["id"] == job["id"]
     assert dataset_jobs_response.json()["ingestion_jobs"][0]["id"] == job["id"]
@@ -527,7 +534,6 @@ async def test_strategy_runner_generates_idempotent_sma_signals() -> None:
         ]:
             session.add(
                 FeatureSnapshotORM(
-                    id=f"feature-snapshot-{timestamp.hour}-fast",
                     dataset_id=dataset.id,
                     timestamp=timestamp,
                     feature_name="sma_20",
@@ -537,7 +543,6 @@ async def test_strategy_runner_generates_idempotent_sma_signals() -> None:
             )
             session.add(
                 FeatureSnapshotORM(
-                    id=f"feature-snapshot-{timestamp.hour}-slow",
                     dataset_id=dataset.id,
                     timestamp=timestamp,
                     feature_name="sma_50",
@@ -551,7 +556,7 @@ async def test_strategy_runner_generates_idempotent_sma_signals() -> None:
             session,
             strategy.id,
             StrategyVersionCreate(
-                template_id="sma_crossover",
+                template_id=SMA_CROSSOVER_TEMPLATE_ID,
                 dataset_id=dataset.id,
                 parameters={"confidence": 0.9, "suggested_size": 0.25},
             ),
@@ -568,6 +573,86 @@ async def test_strategy_runner_generates_idempotent_sma_signals() -> None:
     assert [signal.side for signal in reversed(signals)] == ["short", "long"]
     assert all(signal.confidence == 0.9 for signal in signals)
     assert all(signal.suggested_size == 0.25 for signal in signals)
+
+
+@pytest.mark.anyio
+async def test_workflow_chain_keeps_uuid_ids_from_idea_to_paper_deployment() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        _, _, dataset = await _create_research_chain_in_session(session)
+        idea = await clientless_create_idea(session)
+        strategy = await create_strategy(
+            session,
+            StrategyCreate(
+                name="UUID chain strategy",
+                source_idea_id=idea.id,
+                description="Ensures UUIDs survive the workflow chain.",
+            ),
+        )
+        version = await create_strategy_version(
+            session,
+            strategy.id,
+            StrategyVersionCreate(template_id=SMA_CROSSOVER_TEMPLATE_ID, dataset_id=dataset.id),
+        )
+        backtest = BacktestRunORM(
+            strategy_version_id=version.id,
+            dataset_id=dataset.id,
+            status="succeeded",
+            starting_balance=1000,
+            fee_bps=0,
+            slippage_bps=0,
+            metrics={
+                "total_return": 0.01,
+                "max_drawdown": -0.01,
+                "trade_count": 1,
+            },
+        )
+        session.add(backtest)
+        strategy_orm = sync_session.get(StrategyORM, strategy.id)
+        assert strategy_orm is not None
+        strategy_orm.status = "Backtested"
+        await session.commit()
+        await session.refresh(backtest)
+
+        account = await create_paper_account(session, PaperAccountCreate(name="UUID paper", starting_balance=1000))
+        deployment = await create_paper_deployment(
+            session,
+            PaperDeploymentCreate(
+                strategy_id=strategy.id,
+                strategy_version_id=version.id,
+                paper_account_id=account.id,
+            ),
+        )
+
+    engine.dispose()
+
+    assert isinstance(idea.id, UUID)
+    assert isinstance(strategy.id, UUID)
+    assert isinstance(version.id, UUID)
+    assert isinstance(version.template_id, UUID)
+    assert isinstance(backtest.id, UUID)
+    assert isinstance(account.id, UUID)
+    assert isinstance(deployment.id, UUID)
+
+
+async def clientless_create_idea(session: AsyncSessionAdapter):
+    from app.db.repositories import create_idea
+
+    return await create_idea(
+        session,
+        IdeaCreate(
+            title="UUID workflow idea",
+            thesis="Every workflow entity should use a native UUID identifier.",
+        ),
+    )
 
 
 @pytest.mark.anyio
@@ -597,14 +682,13 @@ async def test_backtest_run_replays_long_flat_signals_and_persists_results() -> 
         version = await create_strategy_version(
             session,
             strategy.id,
-            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+            StrategyVersionCreate(template_id=SMA_CROSSOVER_TEMPLATE_ID, dataset_id=dataset.id),
         )
         start = datetime(2026, 1, 1, tzinfo=UTC)
         for index, close in enumerate([100.0, 110.0, 120.0]):
             timestamp = start + timedelta(hours=index)
             session.add(
                 CandleORM(
-                    id=f"candle-{index}",
                     dataset_id=dataset.id,
                     opened_at=timestamp,
                     open=close,
@@ -616,7 +700,6 @@ async def test_backtest_run_replays_long_flat_signals_and_persists_results() -> 
             )
         session.add(
             SignalORM(
-                id="signal-long",
                 strategy_version_id=version.id,
                 strategy_id=strategy.id,
                 dataset_id=dataset.id,
@@ -631,7 +714,6 @@ async def test_backtest_run_replays_long_flat_signals_and_persists_results() -> 
         )
         session.add(
             SignalORM(
-                id="signal-flat",
                 strategy_version_id=version.id,
                 strategy_id=strategy.id,
                 dataset_id=dataset.id,
@@ -700,11 +782,10 @@ async def test_promote_strategy_to_backtested_when_backtest_gate_passes() -> Non
         version = await create_strategy_version(
             session,
             strategy.id,
-            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+            StrategyVersionCreate(template_id=SMA_CROSSOVER_TEMPLATE_ID, dataset_id=dataset.id),
         )
         session.add(
             BacktestRunORM(
-                id="backtest-ready",
                 strategy_version_id=version.id,
                 dataset_id=dataset.id,
                 status="succeeded",
@@ -766,11 +847,10 @@ async def test_promote_strategy_blocks_with_human_readable_reasons() -> None:
         version = await create_strategy_version(
             session,
             strategy.id,
-            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+            StrategyVersionCreate(template_id=SMA_CROSSOVER_TEMPLATE_ID, dataset_id=dataset.id),
         )
         session.add(
             BacktestRunORM(
-                id="backtest-blocked",
                 strategy_version_id=version.id,
                 dataset_id=dataset.id,
                 status="succeeded",
@@ -881,11 +961,10 @@ async def test_promote_backtested_strategy_to_paper_trading_when_latest_backtest
         version = await create_strategy_version(
             session,
             strategy.id,
-            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+            StrategyVersionCreate(template_id=SMA_CROSSOVER_TEMPLATE_ID, dataset_id=dataset.id),
         )
         session.add(
             BacktestRunORM(
-                id="backtest-paper-ready",
                 strategy_version_id=version.id,
                 dataset_id=dataset.id,
                 status="succeeded",
@@ -950,14 +1029,13 @@ async def test_paper_trading_steps_long_flat_signals_and_tracks_pnl() -> None:
         version = await create_strategy_version(
             session,
             strategy.id,
-            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+            StrategyVersionCreate(template_id=SMA_CROSSOVER_TEMPLATE_ID, dataset_id=dataset.id),
         )
         start = datetime(2026, 1, 1, tzinfo=UTC)
         for index, close in enumerate([100.0, 110.0, 120.0]):
             timestamp = start + timedelta(hours=index)
             session.add(
                 CandleORM(
-                    id=f"paper-candle-{index}",
                     dataset_id=dataset.id,
                     opened_at=timestamp,
                     open=close,
@@ -969,7 +1047,6 @@ async def test_paper_trading_steps_long_flat_signals_and_tracks_pnl() -> None:
             )
         session.add(
             SignalORM(
-                id="paper-signal-long",
                 strategy_version_id=version.id,
                 strategy_id=strategy.id,
                 dataset_id=dataset.id,
@@ -984,7 +1061,6 @@ async def test_paper_trading_steps_long_flat_signals_and_tracks_pnl() -> None:
         )
         session.add(
             SignalORM(
-                id="paper-signal-flat",
                 strategy_version_id=version.id,
                 strategy_id=strategy.id,
                 dataset_id=dataset.id,
@@ -1014,8 +1090,8 @@ async def test_paper_trading_steps_long_flat_signals_and_tracks_pnl() -> None:
         deployment_response = await test_client.post(
             "/paper/deployments",
             json={
-                "strategy_id": strategy.id,
-                "strategy_version_id": version.id,
+                "strategy_id": str(strategy.id),
+                "strategy_version_id": str(version.id),
                 "paper_account_id": account["id"],
             },
         )
@@ -1103,7 +1179,6 @@ async def test_market_intelligence_api_computes_current_regime_and_audits() -> N
             for feature_name, value in values.items():
                 session.add(
                     FeatureSnapshotORM(
-                        id=f"regime-feature-{index}-{feature_name}",
                         dataset_id=dataset.id,
                         timestamp=timestamp,
                         feature_name=feature_name,
@@ -1161,7 +1236,7 @@ async def test_strategy_signal_generation_stores_skipped_signal_when_regime_is_b
             session,
             strategy.id,
             StrategyVersionCreate(
-                template_id="sma_crossover",
+                template_id=SMA_CROSSOVER_TEMPLATE_ID,
                 dataset_id=dataset.id,
                 allowed_regimes=["Bear Trend"],
             ),
@@ -1170,7 +1245,6 @@ async def test_strategy_signal_generation_stores_skipped_signal_when_regime_is_b
         for feature_name, value in {"sma_20": 120.0, "sma_50": 100.0}.items():
             session.add(
                 FeatureSnapshotORM(
-                    id=f"blocked-feature-{feature_name}",
                     dataset_id=dataset.id,
                     timestamp=timestamp,
                     feature_name=feature_name,
@@ -1180,7 +1254,6 @@ async def test_strategy_signal_generation_stores_skipped_signal_when_regime_is_b
             )
         session.add(
             MarketRegimeSnapshotORM(
-                id="market-regime-blocked",
                 dataset_id=dataset.id,
                 timestamp=timestamp,
                 trend_regime="UPTREND",

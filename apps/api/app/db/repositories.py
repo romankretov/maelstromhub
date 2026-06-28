@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,8 +7,8 @@ from app.db.models import AuditEventORM, IdeaORM, StrategyORM
 from maelstromhub_core import AuditEvent, Idea, IdeaCreate, Strategy, StrategyCreate, StrategyStatus
 
 
-def _new_id(prefix: str) -> str:
-    return f"{prefix}-{uuid4()}"
+def _new_id() -> UUID:
+    return uuid4()
 
 
 def idea_to_schema(idea: IdeaORM) -> Idea:
@@ -29,7 +29,7 @@ async def list_ideas(session: AsyncSession) -> list[Idea]:
 
 
 async def create_idea(session: AsyncSession, payload: IdeaCreate, actor: str = "system") -> Idea:
-    idea = IdeaORM(id=_new_id("idea"), title=payload.title, thesis=payload.thesis)
+    idea = IdeaORM(id=_new_id(), title=payload.title, thesis=payload.thesis)
     session.add(idea)
     await session.flush()
     await create_audit_event(
@@ -51,7 +51,7 @@ async def list_strategies(session: AsyncSession) -> list[Strategy]:
 
 async def create_strategy(session: AsyncSession, payload: StrategyCreate, actor: str = "system") -> Strategy:
     strategy = StrategyORM(
-        id=_new_id("strategy"),
+        id=_new_id(),
         name=payload.name,
         status=StrategyStatus.DRAFT.value,
         source_idea_id=payload.source_idea_id,
@@ -81,14 +81,14 @@ async def create_audit_event(
     *,
     actor: str,
     action: str,
-    subject: str,
+    subject: object,
     flush: bool = True,
 ) -> AuditEventORM:
     event = AuditEventORM(
-        id=_new_id("audit"),
+        id=_new_id(),
         actor=actor,
         action=action,
-        subject=subject,
+        subject=str(subject),
     )
     session.add(event)
     if flush:

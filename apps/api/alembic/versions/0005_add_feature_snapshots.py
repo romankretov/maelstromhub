@@ -24,8 +24,8 @@ def upgrade() -> None:
 
     op.create_table(
         "feature_snapshots",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("feature_name", sa.String(length=120), nullable=False),
         sa.Column("numeric_value", sa.Numeric(24, 10), nullable=False),

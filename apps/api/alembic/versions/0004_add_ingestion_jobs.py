@@ -19,8 +19,8 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "ingestion_jobs",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("status", sa.String(length=40), nullable=False),
         sa.Column("requested_start", sa.DateTime(timezone=True), nullable=True),
         sa.Column("requested_end", sa.DateTime(timezone=True), nullable=True),

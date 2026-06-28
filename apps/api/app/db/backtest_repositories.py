@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -39,12 +40,12 @@ class OpenPosition:
 
 async def create_backtest_run(
     session: AsyncSession,
-    version_id: str,
+    version_id: UUID,
     payload: BacktestRunCreate,
 ) -> BacktestRunDetail:
     version = await _get_or_404(session, StrategyVersionORM, version_id)
     run = BacktestRunORM(
-        id=_new_id("backtest"),
+        id=_new_id(),
         strategy_version_id=version.id,
         dataset_id=version.dataset_id,
         status=BacktestStatus.STARTED.value,
@@ -74,7 +75,7 @@ async def create_backtest_run(
     return await get_backtest_run(session, run.id)
 
 
-async def list_strategy_version_backtests(session: AsyncSession, version_id: str) -> list[BacktestRun]:
+async def list_strategy_version_backtests(session: AsyncSession, version_id: UUID) -> list[BacktestRun]:
     await _get_or_404(session, StrategyVersionORM, version_id)
     result = await session.execute(
         select(BacktestRunORM)
@@ -84,7 +85,7 @@ async def list_strategy_version_backtests(session: AsyncSession, version_id: str
     return [_run_to_schema(run) for run in result.scalars()]
 
 
-async def get_backtest_run(session: AsyncSession, backtest_id: str) -> BacktestRunDetail:
+async def get_backtest_run(session: AsyncSession, backtest_id: UUID) -> BacktestRunDetail:
     run = await _get_or_404(session, BacktestRunORM, backtest_id)
     trades_result = await session.execute(
         select(BacktestTradeORM)
@@ -132,7 +133,7 @@ async def _run_backtest(session: AsyncSession, run: BacktestRunORM, version: Str
         max_equity = max(max_equity, equity)
         drawdown = 0.0 if max_equity == 0 else (equity - max_equity) / max_equity
         snapshot = EquityCurveSnapshotORM(
-            id=_new_id("equity"),
+            id=_new_id(),
             backtest_run_id=run.id,
             timestamp=timestamp,
             equity=equity,
@@ -171,21 +172,21 @@ async def _run_backtest(session: AsyncSession, run: BacktestRunORM, version: Str
     await session.flush()
 
 
-async def _load_candles(session: AsyncSession, dataset_id: str) -> list[CandleORM]:
+async def _load_candles(session: AsyncSession, dataset_id: UUID) -> list[CandleORM]:
     result = await session.execute(
         select(CandleORM).where(CandleORM.dataset_id == dataset_id).order_by(CandleORM.opened_at.asc())
     )
     return list(result.scalars())
 
 
-async def _load_signals_by_timestamp(session: AsyncSession, version_id: str) -> dict[datetime, SignalORM]:
+async def _load_signals_by_timestamp(session: AsyncSession, version_id: UUID) -> dict[datetime, SignalORM]:
     result = await session.execute(
         select(SignalORM).where(SignalORM.strategy_version_id == version_id).order_by(SignalORM.timestamp.asc())
     )
     return {signal.timestamp.astimezone(UTC): signal for signal in result.scalars()}
 
 
-async def _load_regimes_by_timestamp(session: AsyncSession, dataset_id: str) -> dict[datetime, MarketRegimeSnapshotORM]:
+async def _load_regimes_by_timestamp(session: AsyncSession, dataset_id: UUID) -> dict[datetime, MarketRegimeSnapshotORM]:
     result = await session.execute(
         select(MarketRegimeSnapshotORM)
         .where(MarketRegimeSnapshotORM.dataset_id == dataset_id)
@@ -220,7 +221,7 @@ def _open_long(
 
 
 def _close_long(
-    run_id: str,
+    run_id: UUID,
     position: OpenPosition,
     signal: SignalORM | None,
     close: float,
@@ -235,7 +236,7 @@ def _close_long(
     pnl = (exit_price - position.entry_price) * position.quantity - position.entry_fee - exit_fee
     fees = position.entry_fee + exit_fee
     trade = BacktestTradeORM(
-        id=_new_id("backtest-trade"),
+        id=_new_id(),
         backtest_run_id=run_id,
         timestamp=signal.timestamp if signal else position.entry_timestamp,
         symbol=position.symbol,
@@ -314,7 +315,7 @@ def _regime_metrics(
     }
 
 
-async def _get_or_404(session: AsyncSession, model: type[Any], item_id: str) -> Any:
+async def _get_or_404(session: AsyncSession, model: type[Any], item_id: UUID) -> Any:
     item = await session.get(model, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Resource not found")

@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,7 +83,7 @@ async def post_strategy(payload: StrategyCreate, session: SessionDependency) -> 
 
 
 @router.post("/strategies/{strategy_id}/promote")
-async def post_strategy_promote(strategy_id: str, session: SessionDependency) -> StrategyPromotionResult:
+async def post_strategy_promote(strategy_id: UUID, session: SessionDependency) -> StrategyPromotionResult:
     return await promote_strategy(session, strategy_id)
 
 
@@ -93,7 +94,7 @@ async def get_strategy_templates(session: SessionDependency) -> dict[str, list[S
 
 @router.post("/strategies/{strategy_id}/versions", status_code=201)
 async def post_strategy_version(
-    strategy_id: str,
+    strategy_id: UUID,
     payload: StrategyVersionCreate,
     session: SessionDependency,
 ) -> StrategyVersion:
@@ -101,23 +102,23 @@ async def post_strategy_version(
 
 
 @router.get("/strategies/{strategy_id}/versions")
-async def get_strategy_versions(strategy_id: str, session: SessionDependency) -> dict[str, list[StrategyVersion]]:
+async def get_strategy_versions(strategy_id: UUID, session: SessionDependency) -> dict[str, list[StrategyVersion]]:
     return {"strategy_versions": await list_strategy_versions(session, strategy_id)}
 
 
 @router.post("/strategy-versions/{version_id}/run-signals")
-async def post_strategy_version_signals(version_id: str, session: SessionDependency) -> SignalRunResult:
+async def post_strategy_version_signals(version_id: UUID, session: SessionDependency) -> SignalRunResult:
     return await run_strategy_version_signals(session, version_id)
 
 
 @router.get("/strategy-versions/{version_id}/signals")
-async def get_strategy_version_signals(version_id: str, session: SessionDependency) -> dict[str, list[Signal]]:
+async def get_strategy_version_signals(version_id: UUID, session: SessionDependency) -> dict[str, list[Signal]]:
     return {"signals": await list_strategy_version_signals(session, version_id)}
 
 
 @router.post("/strategy-versions/{version_id}/backtests", status_code=201)
 async def post_strategy_version_backtest(
-    version_id: str,
+    version_id: UUID,
     payload: BacktestRunCreate,
     session: SessionDependency,
 ) -> BacktestRunDetail:
@@ -125,12 +126,12 @@ async def post_strategy_version_backtest(
 
 
 @router.get("/strategy-versions/{version_id}/backtests")
-async def get_strategy_version_backtests(version_id: str, session: SessionDependency) -> dict[str, list[BacktestRun]]:
+async def get_strategy_version_backtests(version_id: UUID, session: SessionDependency) -> dict[str, list[BacktestRun]]:
     return {"backtests": await list_strategy_version_backtests(session, version_id)}
 
 
 @router.get("/backtests/{backtest_id}")
-async def get_backtest(backtest_id: str, session: SessionDependency) -> BacktestRunDetail:
+async def get_backtest(backtest_id: UUID, session: SessionDependency) -> BacktestRunDetail:
     return await get_backtest_run(session, backtest_id)
 
 
@@ -155,22 +156,22 @@ async def get_paper_deployments(session: SessionDependency) -> dict[str, list[Pa
 
 
 @router.get("/paper/deployments/{deployment_id}")
-async def get_paper_deployment_detail(deployment_id: str, session: SessionDependency) -> PaperDeployment:
+async def get_paper_deployment_detail(deployment_id: UUID, session: SessionDependency) -> PaperDeployment:
     return await get_paper_deployment(session, deployment_id)
 
 
 @router.post("/paper/deployments/{deployment_id}/step")
-async def post_paper_deployment_step(deployment_id: str, session: SessionDependency) -> PaperStepResult:
+async def post_paper_deployment_step(deployment_id: UUID, session: SessionDependency) -> PaperStepResult:
     return await step_paper_deployment(session, deployment_id)
 
 
 @router.post("/paper/deployments/{deployment_id}/pause")
-async def post_paper_deployment_pause(deployment_id: str, session: SessionDependency) -> PaperDeployment:
+async def post_paper_deployment_pause(deployment_id: UUID, session: SessionDependency) -> PaperDeployment:
     return await pause_paper_deployment(session, deployment_id)
 
 
 @router.post("/paper/deployments/{deployment_id}/stop")
-async def post_paper_deployment_stop(deployment_id: str, session: SessionDependency) -> PaperDeployment:
+async def post_paper_deployment_stop(deployment_id: UUID, session: SessionDependency) -> PaperDeployment:
     return await stop_paper_deployment(session, deployment_id)
 
 

@@ -25,8 +25,8 @@ def upgrade() -> None:
 
     op.create_table(
         "candles",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("dataset_id", sa.Uuid(), nullable=False),
         sa.Column("opened_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("open", sa.Numeric(24, 10), nullable=False),
         sa.Column("high", sa.Numeric(24, 10), nullable=False),

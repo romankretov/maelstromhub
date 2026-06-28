@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, DateTime, Integer, Numeric, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Integer, Numeric, ForeignKey, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -9,7 +10,7 @@ from app.db.base import Base
 class IdeaORM(Base):
     __tablename__ = "ideas"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     thesis: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -24,10 +25,10 @@ class IdeaORM(Base):
 class StrategyORM(Base):
     __tablename__ = "strategies"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    source_idea_id: Mapped[str | None] = mapped_column(
+    source_idea_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("ideas.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -46,7 +47,7 @@ class StrategyORM(Base):
 class AuditEventORM(Base):
     __tablename__ = "audit_events"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     actor: Mapped[str] = mapped_column(String(120), nullable=False)
     action: Mapped[str] = mapped_column(String(120), nullable=False)
     subject: Mapped[str] = mapped_column(String(240), nullable=False)
@@ -60,7 +61,7 @@ class AuditEventORM(Base):
 class AssetORM(Base):
     __tablename__ = "assets"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     symbol: Mapped[str] = mapped_column(String(40), nullable=False)
     venue: Mapped[str] = mapped_column(String(80), nullable=False, default="hyperliquid")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -76,7 +77,7 @@ class AssetORM(Base):
 class TimeframeORM(Base):
     __tablename__ = "timeframes"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     interval: Mapped[str] = mapped_column(String(40), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -92,9 +93,9 @@ class TimeframeORM(Base):
 class DatasetORM(Base):
     __tablename__ = "datasets"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
-    timeframe_id: Mapped[str] = mapped_column(ForeignKey("timeframes.id", ondelete="RESTRICT"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    asset_id: Mapped[UUID] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    timeframe_id: Mapped[UUID] = mapped_column(ForeignKey("timeframes.id", ondelete="RESTRICT"), nullable=False)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     latest_candle_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -123,8 +124,8 @@ class CandleORM(Base):
     __tablename__ = "candles"
     __table_args__ = (UniqueConstraint("dataset_id", "opened_at", name="uq_candles_dataset_opened_at"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     open: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
     high: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
@@ -144,8 +145,8 @@ class CandleORM(Base):
 class IngestionJobORM(Base):
     __tablename__ = "ingestion_jobs"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     job_type: Mapped[str] = mapped_column(String(40), default="candle_backfill", nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     requested_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -168,8 +169,8 @@ class FeatureSnapshotORM(Base):
     __tablename__ = "feature_snapshots"
     __table_args__ = (UniqueConstraint("dataset_id", "timestamp", "feature_name", name="uq_feature_snapshots_dataset_timestamp_name"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     feature_name: Mapped[str] = mapped_column(String(120), nullable=False)
     numeric_value: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
@@ -187,8 +188,8 @@ class MarketRegimeSnapshotORM(Base):
     __tablename__ = "market_regime_snapshots"
     __table_args__ = (UniqueConstraint("dataset_id", "timestamp", name="uq_market_regimes_dataset_timestamp"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     trend_regime: Mapped[str] = mapped_column(String(40), nullable=False)
     volatility_regime: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -210,7 +211,7 @@ class MarketRegimeSnapshotORM(Base):
 class StrategyTemplateORM(Base):
     __tablename__ = "strategy_templates"
 
-    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     required_features: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
@@ -229,10 +230,10 @@ class StrategyVersionORM(Base):
     __tablename__ = "strategy_versions"
     __table_args__ = (UniqueConstraint("strategy_id", "version_number", name="uq_strategy_versions_strategy_number"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    strategy_id: Mapped[str] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
-    template_id: Mapped[str] = mapped_column(ForeignKey("strategy_templates.id", ondelete="RESTRICT"), nullable=False)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    strategy_id: Mapped[UUID] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
+    template_id: Mapped[UUID] = mapped_column(ForeignKey("strategy_templates.id", ondelete="RESTRICT"), nullable=False)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     allowed_regimes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -253,10 +254,10 @@ class SignalORM(Base):
     __tablename__ = "signals"
     __table_args__ = (UniqueConstraint("strategy_version_id", "timestamp", name="uq_signals_version_timestamp"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    strategy_version_id: Mapped[str] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
-    strategy_id: Mapped[str] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    strategy_version_id: Mapped[UUID] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
+    strategy_id: Mapped[UUID] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     symbol: Mapped[str] = mapped_column(String(80), nullable=False)
     side: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -278,9 +279,9 @@ class SignalORM(Base):
 class BacktestRunORM(Base):
     __tablename__ = "backtest_runs"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    strategy_version_id: Mapped[str] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    strategy_version_id: Mapped[UUID] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     starting_balance: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
     fee_bps: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False)
@@ -301,7 +302,7 @@ class BacktestRunORM(Base):
 class PaperAccountORM(Base):
     __tablename__ = "paper_accounts"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     starting_balance: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
     cash_balance: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
@@ -319,11 +320,11 @@ class PaperAccountORM(Base):
 class PaperDeploymentORM(Base):
     __tablename__ = "paper_deployments"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    strategy_id: Mapped[str] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
-    strategy_version_id: Mapped[str] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
-    paper_account_id: Mapped[str] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    strategy_id: Mapped[UUID] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
+    strategy_version_id: Mapped[UUID] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    paper_account_id: Mapped[UUID] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -341,8 +342,8 @@ class PaperDeploymentORM(Base):
 class PaperTradeORM(Base):
     __tablename__ = "paper_trades"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    deployment_id: Mapped[str] = mapped_column(ForeignKey("paper_deployments.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    deployment_id: Mapped[UUID] = mapped_column(ForeignKey("paper_deployments.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     symbol: Mapped[str] = mapped_column(String(80), nullable=False)
     side: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -358,8 +359,8 @@ class PaperTradeORM(Base):
 class PaperPositionORM(Base):
     __tablename__ = "paper_positions"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    deployment_id: Mapped[str] = mapped_column(ForeignKey("paper_deployments.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    deployment_id: Mapped[UUID] = mapped_column(ForeignKey("paper_deployments.id", ondelete="CASCADE"), nullable=False)
     symbol: Mapped[str] = mapped_column(String(80), nullable=False)
     quantity: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
     average_entry_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
@@ -372,8 +373,8 @@ class PaperPositionORM(Base):
 class BacktestTradeORM(Base):
     __tablename__ = "backtest_trades"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    backtest_run_id: Mapped[str] = mapped_column(ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    backtest_run_id: Mapped[UUID] = mapped_column(ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     symbol: Mapped[str] = mapped_column(String(80), nullable=False)
     side: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -390,8 +391,8 @@ class BacktestTradeORM(Base):
 class EquityCurveSnapshotORM(Base):
     __tablename__ = "equity_curve_snapshots"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    backtest_run_id: Mapped[str] = mapped_column(ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    backtest_run_id: Mapped[UUID] = mapped_column(ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     equity: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
     drawdown: Mapped[float] = mapped_column(Numeric(12, 8), nullable=False)
@@ -402,8 +403,8 @@ class EquityCurveSnapshotORM(Base):
 class FeatureORM(Base):
     __tablename__ = "features"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     values: Mapped[dict[str, float]] = mapped_column(JSON, nullable=False, default=dict)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -420,9 +421,9 @@ class FeatureORM(Base):
 class ExperimentORM(Base):
     __tablename__ = "experiments"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
-    feature_id: Mapped[str | None] = mapped_column(ForeignKey("features.id", ondelete="SET NULL"), nullable=True)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    dataset_id: Mapped[UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    feature_id: Mapped[UUID | None] = mapped_column(ForeignKey("features.id", ondelete="SET NULL"), nullable=True)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)

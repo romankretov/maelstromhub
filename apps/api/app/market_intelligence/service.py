@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import create_audit_event
@@ -11,7 +13,7 @@ class RegimeService:
         self.repository = repository or RegimeRepository()
         self.engine = engine or RegimeEngine()
 
-    async def compute_regimes(self, session: AsyncSession, dataset_id: str) -> RegimeComputationResult:
+    async def compute_regimes(self, session: AsyncSession, dataset_id: UUID) -> RegimeComputationResult:
         await self.repository.ensure_dataset(session, dataset_id)
         await create_audit_event(
             session,
@@ -50,11 +52,11 @@ class RegimeService:
             await session.commit()
             raise
 
-    async def list_snapshots(self, session: AsyncSession, dataset_id: str) -> list[MarketRegimeSnapshot]:
+    async def list_snapshots(self, session: AsyncSession, dataset_id: UUID) -> list[MarketRegimeSnapshot]:
         return await self.repository.list_snapshots(session, dataset_id)
 
-    async def current_regime(self, session: AsyncSession, dataset_id: str) -> MarketRegimeSnapshot | None:
+    async def current_regime(self, session: AsyncSession, dataset_id: UUID) -> MarketRegimeSnapshot | None:
         return await self.repository.current_snapshot(session, dataset_id)
 
-    async def market_intelligence(self, session: AsyncSession, dataset_id: str) -> MarketIntelligence:
+    async def market_intelligence(self, session: AsyncSession, dataset_id: UUID) -> MarketIntelligence:
         return MarketIntelligence(dataset_id=dataset_id, regime=await self.current_regime(session, dataset_id))

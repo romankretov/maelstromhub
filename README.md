@@ -100,6 +100,13 @@ docker volume rm maelstromhub_postgres-data
 npm run dev
 ```
 
+UUID schema notes:
+
+- Generated entity identifiers are native PostgreSQL `uuid` columns, not `varchar`: every generated primary key named `id` and every generated foreign key named `*_id` uses UUID storage.
+- `strategy_templates.id` is also a UUID primary key. The built-in templates use stable UUIDs and keep their strategy behavior selected in application code.
+- Alembic revisions now create UUID columns directly. Revision `0010_repair_uuid_columns` repairs existing PostgreSQL databases by converting legacy varchar ID columns to UUID and remapping old template slugs to their stable UUIDs.
+- API responses still serialize UUID values as strings, so frontend route construction and JSON payloads remain string-based at the transport boundary.
+
 Worker:
 
 ```bash

@@ -1,5 +1,6 @@
 from datetime import UTC
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -18,11 +19,11 @@ from maelstromhub_core import (
 
 
 class RegimeRepository:
-    async def ensure_dataset(self, session: AsyncSession, dataset_id: str) -> None:
+    async def ensure_dataset(self, session: AsyncSession, dataset_id: UUID) -> None:
         if await session.get(DatasetORM, dataset_id) is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-    async def load_feature_snapshots(self, session: AsyncSession, dataset_id: str) -> list[tuple[Any, str, float]]:
+    async def load_feature_snapshots(self, session: AsyncSession, dataset_id: UUID) -> list[tuple[Any, str, float]]:
         await self.ensure_dataset(session, dataset_id)
         result = await session.execute(
             select(FeatureSnapshotORM)
@@ -37,7 +38,7 @@ class RegimeRepository:
     async def upsert_classifications(
         self,
         session: AsyncSession,
-        dataset_id: str,
+        dataset_id: UUID,
         classifications: list[RegimeClassification],
     ) -> int:
         written = 0
@@ -63,7 +64,7 @@ class RegimeRepository:
             if existing is None:
                 session.add(
                     MarketRegimeSnapshotORM(
-                        id=_new_id("market-regime"),
+                        id=_new_id(),
                         dataset_id=dataset_id,
                         timestamp=timestamp,
                         **values,
@@ -76,7 +77,7 @@ class RegimeRepository:
         await session.flush()
         return written
 
-    async def list_snapshots(self, session: AsyncSession, dataset_id: str) -> list[MarketRegimeSnapshot]:
+    async def list_snapshots(self, session: AsyncSession, dataset_id: UUID) -> list[MarketRegimeSnapshot]:
         await self.ensure_dataset(session, dataset_id)
         result = await session.execute(
             select(MarketRegimeSnapshotORM)
@@ -85,7 +86,7 @@ class RegimeRepository:
         )
         return [self.to_schema(snapshot) for snapshot in result.scalars()]
 
-    async def current_snapshot(self, session: AsyncSession, dataset_id: str) -> MarketRegimeSnapshot | None:
+    async def current_snapshot(self, session: AsyncSession, dataset_id: UUID) -> MarketRegimeSnapshot | None:
         await self.ensure_dataset(session, dataset_id)
         result = await session.execute(
             select(MarketRegimeSnapshotORM)

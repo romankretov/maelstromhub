@@ -1,4 +1,5 @@
 from typing import Any, TypeVar
+from uuid import UUID
 
 from fastapi import HTTPException
 from datetime import UTC, datetime
@@ -51,7 +52,7 @@ from maelstromhub_core import (
 OrmModel = TypeVar("OrmModel")
 
 
-async def _get_or_404(session: AsyncSession, model: type[OrmModel], item_id: str) -> OrmModel:
+async def _get_or_404(session: AsyncSession, model: type[OrmModel], item_id: UUID) -> OrmModel:
     item = await session.get(model, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Resource not found")
@@ -68,12 +69,12 @@ async def list_assets(session: AsyncSession) -> list[Asset]:
     return [Asset.model_validate(asset) for asset in result.scalars()]
 
 
-async def get_asset(session: AsyncSession, asset_id: str) -> Asset:
+async def get_asset(session: AsyncSession, asset_id: UUID) -> Asset:
     return Asset.model_validate(await _get_or_404(session, AssetORM, asset_id))
 
 
 async def create_asset(session: AsyncSession, payload: AssetCreate) -> Asset:
-    asset = AssetORM(id=_new_id("asset"), **payload.model_dump())
+    asset = AssetORM(id=_new_id(), **payload.model_dump())
     session.add(asset)
     await session.flush()
     await create_audit_event(session, actor="system", action="created_asset", subject=asset.id, flush=False)
@@ -82,7 +83,7 @@ async def create_asset(session: AsyncSession, payload: AssetCreate) -> Asset:
     return Asset.model_validate(asset)
 
 
-async def update_asset(session: AsyncSession, asset_id: str, payload: AssetUpdate) -> Asset:
+async def update_asset(session: AsyncSession, asset_id: UUID, payload: AssetUpdate) -> Asset:
     asset = await _get_or_404(session, AssetORM, asset_id)
     _apply_updates(asset, payload.model_dump(exclude_unset=True))
     await session.commit()
@@ -90,7 +91,7 @@ async def update_asset(session: AsyncSession, asset_id: str, payload: AssetUpdat
     return Asset.model_validate(asset)
 
 
-async def delete_asset(session: AsyncSession, asset_id: str) -> None:
+async def delete_asset(session: AsyncSession, asset_id: UUID) -> None:
     asset = await _get_or_404(session, AssetORM, asset_id)
     await session.delete(asset)
     await session.commit()
@@ -101,12 +102,12 @@ async def list_timeframes(session: AsyncSession) -> list[Timeframe]:
     return [Timeframe.model_validate(timeframe) for timeframe in result.scalars()]
 
 
-async def get_timeframe(session: AsyncSession, timeframe_id: str) -> Timeframe:
+async def get_timeframe(session: AsyncSession, timeframe_id: UUID) -> Timeframe:
     return Timeframe.model_validate(await _get_or_404(session, TimeframeORM, timeframe_id))
 
 
 async def create_timeframe(session: AsyncSession, payload: TimeframeCreate) -> Timeframe:
-    timeframe = TimeframeORM(id=_new_id("timeframe"), **payload.model_dump())
+    timeframe = TimeframeORM(id=_new_id(), **payload.model_dump())
     session.add(timeframe)
     await session.flush()
     await create_audit_event(session, actor="system", action="created_timeframe", subject=timeframe.id, flush=False)
@@ -115,7 +116,7 @@ async def create_timeframe(session: AsyncSession, payload: TimeframeCreate) -> T
     return Timeframe.model_validate(timeframe)
 
 
-async def update_timeframe(session: AsyncSession, timeframe_id: str, payload: TimeframeUpdate) -> Timeframe:
+async def update_timeframe(session: AsyncSession, timeframe_id: UUID, payload: TimeframeUpdate) -> Timeframe:
     timeframe = await _get_or_404(session, TimeframeORM, timeframe_id)
     _apply_updates(timeframe, payload.model_dump(exclude_unset=True))
     await session.commit()
@@ -123,7 +124,7 @@ async def update_timeframe(session: AsyncSession, timeframe_id: str, payload: Ti
     return Timeframe.model_validate(timeframe)
 
 
-async def delete_timeframe(session: AsyncSession, timeframe_id: str) -> None:
+async def delete_timeframe(session: AsyncSession, timeframe_id: UUID) -> None:
     timeframe = await _get_or_404(session, TimeframeORM, timeframe_id)
     await session.delete(timeframe)
     await session.commit()
@@ -134,12 +135,12 @@ async def list_datasets(session: AsyncSession) -> list[Dataset]:
     return [Dataset.model_validate(dataset) for dataset in result.scalars()]
 
 
-async def get_dataset(session: AsyncSession, dataset_id: str) -> Dataset:
+async def get_dataset(session: AsyncSession, dataset_id: UUID) -> Dataset:
     return Dataset.model_validate(await _get_or_404(session, DatasetORM, dataset_id))
 
 
 async def create_dataset(session: AsyncSession, payload: DatasetCreate) -> Dataset:
-    dataset = DatasetORM(id=_new_id("dataset"), **payload.model_dump())
+    dataset = DatasetORM(id=_new_id(), **payload.model_dump())
     session.add(dataset)
     await session.flush()
     await create_audit_event(session, actor="system", action="created_dataset", subject=dataset.id, flush=False)
@@ -148,7 +149,7 @@ async def create_dataset(session: AsyncSession, payload: DatasetCreate) -> Datas
     return Dataset.model_validate(dataset)
 
 
-async def update_dataset(session: AsyncSession, dataset_id: str, payload: DatasetUpdate) -> Dataset:
+async def update_dataset(session: AsyncSession, dataset_id: UUID, payload: DatasetUpdate) -> Dataset:
     dataset = await _get_or_404(session, DatasetORM, dataset_id)
     _apply_updates(dataset, payload.model_dump(exclude_unset=True))
     await session.commit()
@@ -156,13 +157,13 @@ async def update_dataset(session: AsyncSession, dataset_id: str, payload: Datase
     return Dataset.model_validate(dataset)
 
 
-async def delete_dataset(session: AsyncSession, dataset_id: str) -> None:
+async def delete_dataset(session: AsyncSession, dataset_id: UUID) -> None:
     dataset = await _get_or_404(session, DatasetORM, dataset_id)
     await session.delete(dataset)
     await session.commit()
 
 
-async def list_dataset_candles(session: AsyncSession, dataset_id: str) -> list[Candle]:
+async def list_dataset_candles(session: AsyncSession, dataset_id: UUID) -> list[Candle]:
     await _get_or_404(session, DatasetORM, dataset_id)
     result = await session.execute(
         select(CandleORM)
@@ -174,7 +175,7 @@ async def list_dataset_candles(session: AsyncSession, dataset_id: str) -> list[C
 
 async def backfill_dataset_candles(
     session: AsyncSession,
-    dataset_id: str,
+    dataset_id: UUID,
     payload: CandleBackfillRequest,
     provider: CandleProvider,
 ) -> CandleBackfillResult:
@@ -220,13 +221,13 @@ async def backfill_dataset_candles(
 
 async def enqueue_dataset_candle_backfill(
     session: AsyncSession,
-    dataset_id: str,
+    dataset_id: UUID,
     payload: CandleBackfillRequest,
 ) -> IngestionJob:
     await _get_or_404(session, DatasetORM, dataset_id)
     requested_start, requested_end = _resolve_backfill_window(payload)
     job = IngestionJobORM(
-        id=_new_id("ingestion-job"),
+        id=_new_id(),
         dataset_id=dataset_id,
         job_type=IngestionJobType.CANDLE_BACKFILL.value,
         status=IngestionJobStatus.QUEUED.value,
@@ -247,11 +248,11 @@ async def enqueue_dataset_candle_backfill(
     return IngestionJob.model_validate(job)
 
 
-async def get_ingestion_job(session: AsyncSession, job_id: str) -> IngestionJob:
+async def get_ingestion_job(session: AsyncSession, job_id: UUID) -> IngestionJob:
     return IngestionJob.model_validate(await _get_or_404(session, IngestionJobORM, job_id))
 
 
-async def list_dataset_ingestion_jobs(session: AsyncSession, dataset_id: str) -> list[IngestionJob]:
+async def list_dataset_ingestion_jobs(session: AsyncSession, dataset_id: UUID) -> list[IngestionJob]:
     await _get_or_404(session, DatasetORM, dataset_id)
     result = await session.execute(
         select(IngestionJobORM)
@@ -279,7 +280,7 @@ async def run_next_queued_ingestion_job(
 
 async def run_ingestion_job(
     session: AsyncSession,
-    job_id: str,
+    job_id: UUID,
     provider: CandleProvider,
 ) -> IngestionJob:
     job = await _get_or_404(session, IngestionJobORM, job_id)
@@ -290,7 +291,7 @@ async def run_ingestion_job(
 
 async def run_candle_ingestion_job(
     session: AsyncSession,
-    job_id: str,
+    job_id: UUID,
     provider: CandleProvider,
 ) -> IngestionJob:
     job = await _get_or_404(session, IngestionJobORM, job_id)
@@ -348,12 +349,12 @@ async def run_candle_ingestion_job(
 
 async def enqueue_dataset_feature_compute(
     session: AsyncSession,
-    dataset_id: str,
+    dataset_id: UUID,
     payload: FeatureComputeRequest,
 ) -> IngestionJob:
     await _get_or_404(session, DatasetORM, dataset_id)
     job = IngestionJobORM(
-        id=_new_id("ingestion-job"),
+        id=_new_id(),
         dataset_id=dataset_id,
         job_type=IngestionJobType.FEATURE_COMPUTE.value,
         status=IngestionJobStatus.QUEUED.value,
@@ -372,7 +373,7 @@ async def enqueue_dataset_feature_compute(
     return IngestionJob.model_validate(job)
 
 
-async def run_feature_ingestion_job(session: AsyncSession, job_id: str) -> IngestionJob:
+async def run_feature_ingestion_job(session: AsyncSession, job_id: UUID) -> IngestionJob:
     job = await _get_or_404(session, IngestionJobORM, job_id)
     dataset = await _get_or_404(session, DatasetORM, job.dataset_id)
 
@@ -414,7 +415,7 @@ async def run_feature_ingestion_job(session: AsyncSession, job_id: str) -> Inges
     return IngestionJob.model_validate(job)
 
 
-async def list_feature_snapshots(session: AsyncSession, dataset_id: str) -> list[FeatureSnapshot]:
+async def list_feature_snapshots(session: AsyncSession, dataset_id: UUID) -> list[FeatureSnapshot]:
     await _get_or_404(session, DatasetORM, dataset_id)
     result = await session.execute(
         select(FeatureSnapshotORM)
@@ -424,7 +425,7 @@ async def list_feature_snapshots(session: AsyncSession, dataset_id: str) -> list
     return [_feature_snapshot_to_schema(snapshot) for snapshot in result.scalars()]
 
 
-async def get_feature_summary(session: AsyncSession, dataset_id: str) -> FeatureSummary:
+async def get_feature_summary(session: AsyncSession, dataset_id: UUID) -> FeatureSummary:
     snapshots = await list_feature_snapshots(session, dataset_id)
     grouped: dict[str, list[FeatureSnapshot]] = {}
     latest_timestamp = None
@@ -462,7 +463,7 @@ def _resolve_backfill_window(payload: CandleBackfillRequest):
 
 async def _upsert_candles(
     session: AsyncSession,
-    dataset_id: str,
+    dataset_id: UUID,
     provider_candles: list[ProviderCandle],
 ) -> tuple[int, int]:
     inserted = 0
@@ -487,7 +488,7 @@ async def _upsert_candles(
         if existing is None:
             session.add(
                 CandleORM(
-                    id=_new_id("candle"),
+                    id=_new_id(),
                     dataset_id=dataset_id,
                     opened_at=opened_at,
                     **values,
@@ -508,7 +509,7 @@ async def _refresh_dataset_candle_stats(session: AsyncSession, dataset: DatasetO
     dataset.latest_candle_timestamp = latest_result.scalar_one_or_none()
 
 
-async def _load_feature_candles(session: AsyncSession, dataset_id: str) -> list[CandleInput]:
+async def _load_feature_candles(session: AsyncSession, dataset_id: UUID) -> list[CandleInput]:
     result = await session.execute(
         select(CandleORM)
         .where(CandleORM.dataset_id == dataset_id)
@@ -526,7 +527,7 @@ async def _load_feature_candles(session: AsyncSession, dataset_id: str) -> list[
     ]
 
 
-async def _upsert_feature_snapshots(session: AsyncSession, dataset_id: str, feature_values) -> tuple[int, int]:
+async def _upsert_feature_snapshots(session: AsyncSession, dataset_id: UUID, feature_values) -> tuple[int, int]:
     inserted = 0
     updated = 0
     for value in feature_values:
@@ -546,7 +547,7 @@ async def _upsert_feature_snapshots(session: AsyncSession, dataset_id: str, feat
         if existing is None:
             session.add(
                 FeatureSnapshotORM(
-                    id=_new_id("feature-snapshot"),
+                    id=_new_id(),
                     dataset_id=dataset_id,
                     timestamp=timestamp,
                     feature_name=value.feature_name,
@@ -578,12 +579,12 @@ async def list_features(session: AsyncSession) -> list[Feature]:
     return [Feature.model_validate(feature) for feature in result.scalars()]
 
 
-async def get_feature(session: AsyncSession, feature_id: str) -> Feature:
+async def get_feature(session: AsyncSession, feature_id: UUID) -> Feature:
     return Feature.model_validate(await _get_or_404(session, FeatureORM, feature_id))
 
 
 async def create_feature(session: AsyncSession, payload: FeatureCreate) -> Feature:
-    feature = FeatureORM(id=_new_id("feature"), **payload.model_dump())
+    feature = FeatureORM(id=_new_id(), **payload.model_dump())
     session.add(feature)
     await session.flush()
     await create_audit_event(session, actor="system", action="created_feature", subject=feature.id, flush=False)
@@ -592,7 +593,7 @@ async def create_feature(session: AsyncSession, payload: FeatureCreate) -> Featu
     return Feature.model_validate(feature)
 
 
-async def update_feature(session: AsyncSession, feature_id: str, payload: FeatureUpdate) -> Feature:
+async def update_feature(session: AsyncSession, feature_id: UUID, payload: FeatureUpdate) -> Feature:
     feature = await _get_or_404(session, FeatureORM, feature_id)
     _apply_updates(feature, payload.model_dump(exclude_unset=True))
     await session.commit()
@@ -600,7 +601,7 @@ async def update_feature(session: AsyncSession, feature_id: str, payload: Featur
     return Feature.model_validate(feature)
 
 
-async def delete_feature(session: AsyncSession, feature_id: str) -> None:
+async def delete_feature(session: AsyncSession, feature_id: UUID) -> None:
     feature = await _get_or_404(session, FeatureORM, feature_id)
     await session.delete(feature)
     await session.commit()
@@ -611,13 +612,13 @@ async def list_experiments(session: AsyncSession) -> list[Experiment]:
     return [Experiment.model_validate(experiment) for experiment in result.scalars()]
 
 
-async def get_experiment(session: AsyncSession, experiment_id: str) -> Experiment:
+async def get_experiment(session: AsyncSession, experiment_id: UUID) -> Experiment:
     return Experiment.model_validate(await _get_or_404(session, ExperimentORM, experiment_id))
 
 
 async def create_experiment(session: AsyncSession, payload: ExperimentCreate) -> Experiment:
     experiment = ExperimentORM(
-        id=_new_id("experiment"),
+        id=_new_id(),
         status=ExperimentStatus.DRAFT.value,
         **payload.model_dump(),
     )
@@ -629,7 +630,7 @@ async def create_experiment(session: AsyncSession, payload: ExperimentCreate) ->
     return Experiment.model_validate(experiment)
 
 
-async def update_experiment(session: AsyncSession, experiment_id: str, payload: ExperimentUpdate) -> Experiment:
+async def update_experiment(session: AsyncSession, experiment_id: UUID, payload: ExperimentUpdate) -> Experiment:
     experiment = await _get_or_404(session, ExperimentORM, experiment_id)
     updates = payload.model_dump(exclude_unset=True)
     if "status" in updates and updates["status"] is not None:
@@ -640,7 +641,7 @@ async def update_experiment(session: AsyncSession, experiment_id: str, payload: 
     return Experiment.model_validate(experiment)
 
 
-async def delete_experiment(session: AsyncSession, experiment_id: str) -> None:
+async def delete_experiment(session: AsyncSession, experiment_id: UUID) -> None:
     experiment = await _get_or_404(session, ExperimentORM, experiment_id)
     await session.delete(experiment)
     await session.commit()
