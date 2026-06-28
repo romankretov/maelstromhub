@@ -207,6 +207,74 @@ export type StrategyPromotionResult = {
   evaluation: BacktestEvaluation | null;
 };
 
+export type PaperAccountStatus = "active" | "closed";
+export type PaperDeploymentStatus = "running" | "paused" | "stopped";
+
+export type PaperAccountCreate = {
+  name: string;
+  starting_balance?: number;
+};
+
+export type PaperAccount = {
+  id: string;
+  name: string;
+  starting_balance: number;
+  cash_balance: number;
+  equity: number;
+  status: PaperAccountStatus;
+  created_at: string;
+};
+
+export type PaperDeploymentCreate = {
+  strategy_id: string;
+  strategy_version_id: string;
+  paper_account_id: string;
+};
+
+export type PaperTrade = {
+  id: string;
+  deployment_id: string;
+  timestamp: string;
+  symbol: string;
+  side: string;
+  price: number;
+  quantity: number;
+  fees: number;
+  pnl: number;
+  reason: string;
+};
+
+export type PaperPosition = {
+  id: string;
+  deployment_id: string;
+  symbol: string;
+  quantity: number;
+  average_entry_price: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+};
+
+export type PaperDeployment = {
+  id: string;
+  strategy_id: string;
+  strategy_version_id: string;
+  dataset_id: string;
+  paper_account_id: string;
+  status: PaperDeploymentStatus;
+  started_at: string;
+  stopped_at: string | null;
+  last_processed_at: string | null;
+  account: PaperAccount | null;
+  positions: PaperPosition[];
+  trades: PaperTrade[];
+};
+
+export type PaperStepResult = {
+  deployment: PaperDeployment;
+  advanced: boolean;
+  message: string;
+};
+
 export type IdeaCreate = {
   title: string;
   thesis: string;
@@ -413,6 +481,55 @@ export async function getStrategyVersionBacktests(versionId: string): Promise<Ba
 
 export async function getBacktest(backtestId: string): Promise<BacktestRunDetail> {
   return request<BacktestRunDetail>(`/backtests/${backtestId}`);
+}
+
+export async function createPaperAccount(payload: PaperAccountCreate): Promise<PaperAccount> {
+  return request<PaperAccount>("/paper/accounts", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPaperAccounts(): Promise<PaperAccount[]> {
+  const body = await request<{ paper_accounts: PaperAccount[] }>("/paper/accounts");
+  return body.paper_accounts;
+}
+
+export async function createPaperDeployment(payload: PaperDeploymentCreate): Promise<PaperDeployment> {
+  return request<PaperDeployment>("/paper/deployments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPaperDeployments(): Promise<PaperDeployment[]> {
+  const body = await request<{ paper_deployments: PaperDeployment[] }>("/paper/deployments");
+  return body.paper_deployments;
+}
+
+export async function getPaperDeployment(deploymentId: string): Promise<PaperDeployment> {
+  return request<PaperDeployment>(`/paper/deployments/${deploymentId}`);
+}
+
+export async function stepPaperDeployment(deploymentId: string): Promise<PaperStepResult> {
+  return request<PaperStepResult>(`/paper/deployments/${deploymentId}/step`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function pausePaperDeployment(deploymentId: string): Promise<PaperDeployment> {
+  return request<PaperDeployment>(`/paper/deployments/${deploymentId}/pause`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function stopPaperDeployment(deploymentId: string): Promise<PaperDeployment> {
+  return request<PaperDeployment>(`/paper/deployments/${deploymentId}/stop`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }
 
 export async function getAuditEvents(): Promise<AuditEvent[]> {

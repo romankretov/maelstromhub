@@ -145,13 +145,7 @@ async def promote_strategy(session: AsyncSession, strategy_id: str) -> StrategyP
     if from_status == StrategyStatus.DRAFT:
         return await _promote_draft_to_backtested(session, strategy, from_status)
     if from_status == StrategyStatus.BACKTESTED:
-        return await _block_strategy_promotion(
-            session,
-            strategy,
-            from_status,
-            StrategyStatus.PAPER_TRADING,
-            ["Paper Trading is not implemented yet. Keep this strategy in Backtested until the paper-trading gate ships."],
-        )
+        return await _promote_backtested_to_paper_trading(session, strategy, from_status)
     return await _block_strategy_promotion(
         session,
         strategy,
@@ -432,6 +426,55 @@ async def _promote_draft_to_backtested(
         reasons=[],
         backtest_run=_run_to_schema(selected_run),
         evaluation=selected_evaluation,
+    )
+
+
+async def _promote_backtested_to_paper_trading(
+    session: AsyncSession,
+    strategy: StrategyORM,
+    from_status: StrategyStatus,
+) -> StrategyPromotionResult:
+    runs = await _list_succeeded_backtests_for_strategy(session, strategy.id)
+    if not runs:
+        return await _block_strategy_promotion(
+            session,
+            strategy,
+            from_status,
+            StrategyStatus.PAPER_TRADING,
+            ["Run at least one successful backtest before promoting this strategy to Paper Trading."],
+        )
+
+    latest_run = runs[0]
+    evaluation = _evaluate_backtest_run(latest_run)
+    if evaluation.verdict == BacktestVerdict.BLOCKED:
+        return await _block_strategy_promotion(
+            session,
+            strategy,
+            from_status,
+            StrategyStatus.PAPER_TRADING,
+            ["Latest backtest verdict is too risky for Paper Trading.", *evaluation.reasons],
+            backtest_run=_run_to_schema(latest_run),
+            evaluation=evaluation,
+        )
+
+    strategy.status = StrategyStatus.PAPER_TRADING.value
+    await create_audit_event(
+        session,
+        actor="system",
+        action="promoted_strategy_to_paper_trading",
+        subject=strategy.id,
+        flush=False,
+    )
+    await session.commit()
+    await session.refresh(strategy)
+    return StrategyPromotionResult(
+        strategy=Strategy.model_validate(strategy),
+        promoted=True,
+        from_status=from_status,
+        to_status=StrategyStatus.PAPER_TRADING,
+        reasons=[],
+        backtest_run=_run_to_schema(latest_run),
+        evaluation=evaluation,
     )
 
 

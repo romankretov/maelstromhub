@@ -4,6 +4,7 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/apps/api:/app/packages/core
 
 COPY packages/core /app/packages/core
 COPY apps/api /app/apps/api

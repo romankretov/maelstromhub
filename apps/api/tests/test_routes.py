@@ -852,5 +852,196 @@ async def test_promote_backtested_strategy_blocks_paper_trading() -> None:
     assert result["promoted"] is False
     assert result["from_status"] == "Backtested"
     assert result["to_status"] == "Paper Trading"
-    assert "Paper Trading is not implemented yet" in result["reasons"][0]
+    assert "Run at least one successful backtest" in result["reasons"][0]
     assert audit_response.json()["audit_events"][0]["action"] == "blocked_strategy_promotion"
+
+
+@pytest.mark.anyio
+async def test_promote_backtested_strategy_to_paper_trading_when_latest_backtest_is_safe() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        _, _, dataset = await _create_research_chain_in_session(session)
+        strategy = await create_strategy(
+            session,
+            StrategyCreate(name="Paper candidate", description="Backtested strategy ready for paper mode."),
+        )
+        strategy_orm = sync_session.get(StrategyORM, strategy.id)
+        assert strategy_orm is not None
+        strategy_orm.status = "Backtested"
+        version = await create_strategy_version(
+            session,
+            strategy.id,
+            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+        )
+        session.add(
+            BacktestRunORM(
+                id="backtest-paper-ready",
+                strategy_version_id=version.id,
+                dataset_id=dataset.id,
+                status="succeeded",
+                starting_balance=1000,
+                fee_bps=0,
+                slippage_bps=0,
+                metrics={
+                    "total_return": 0.04,
+                    "max_drawdown": -0.03,
+                    "win_rate": 0.5,
+                    "trade_count": 2,
+                    "profit_factor": 1.2,
+                },
+            )
+        )
+        await session.commit()
+
+    async def override_get_session() -> AsyncIterator[AsyncSessionAdapter]:
+        with session_factory() as session:
+            yield AsyncSessionAdapter(session)
+
+    app.dependency_overrides[get_session] = override_get_session
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
+        response = await test_client.post(f"/strategies/{strategy.id}/promote")
+        audit_response = await test_client.get("/audit-events")
+
+    app.dependency_overrides.clear()
+    engine.dispose()
+
+    result = response.json()
+    assert response.status_code == 200
+    assert result["promoted"] is True
+    assert result["from_status"] == "Backtested"
+    assert result["to_status"] == "Paper Trading"
+    assert result["strategy"]["status"] == "Paper Trading"
+    assert audit_response.json()["audit_events"][0]["action"] == "promoted_strategy_to_paper_trading"
+
+
+@pytest.mark.anyio
+async def test_paper_trading_steps_long_flat_signals_and_tracks_pnl() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        asset, timeframe, dataset = await _create_research_chain_in_session(session)
+        strategy = await create_strategy(
+            session,
+            StrategyCreate(name="Paper rehearsal", description="Manual long flat paper run."),
+        )
+        strategy_orm = sync_session.get(StrategyORM, strategy.id)
+        assert strategy_orm is not None
+        strategy_orm.status = "Backtested"
+        version = await create_strategy_version(
+            session,
+            strategy.id,
+            StrategyVersionCreate(template_id="sma_crossover", dataset_id=dataset.id),
+        )
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        for index, close in enumerate([100.0, 110.0, 120.0]):
+            timestamp = start + timedelta(hours=index)
+            session.add(
+                CandleORM(
+                    id=f"paper-candle-{index}",
+                    dataset_id=dataset.id,
+                    opened_at=timestamp,
+                    open=close,
+                    high=close,
+                    low=close,
+                    close=close,
+                    volume=100.0,
+                )
+            )
+        session.add(
+            SignalORM(
+                id="paper-signal-long",
+                strategy_version_id=version.id,
+                strategy_id=strategy.id,
+                dataset_id=dataset.id,
+                timestamp=start,
+                symbol=asset.symbol,
+                side="long",
+                confidence=1.0,
+                reason="paper enter",
+                suggested_size=1.0,
+                metadata_json={},
+            )
+        )
+        session.add(
+            SignalORM(
+                id="paper-signal-flat",
+                strategy_version_id=version.id,
+                strategy_id=strategy.id,
+                dataset_id=dataset.id,
+                timestamp=start + timedelta(hours=2),
+                symbol=asset.symbol,
+                side="flat",
+                confidence=1.0,
+                reason="paper exit",
+                suggested_size=0.0,
+                metadata_json={},
+            )
+        )
+        await session.commit()
+
+    async def override_get_session() -> AsyncIterator[AsyncSessionAdapter]:
+        with session_factory() as session:
+            yield AsyncSessionAdapter(session)
+
+    app.dependency_overrides[get_session] = override_get_session
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as test_client:
+        account_response = await test_client.post(
+            "/paper/accounts",
+            json={"name": "Paper account", "starting_balance": 1000},
+        )
+        account = account_response.json()
+        deployment_response = await test_client.post(
+            "/paper/deployments",
+            json={
+                "strategy_id": strategy.id,
+                "strategy_version_id": version.id,
+                "paper_account_id": account["id"],
+            },
+        )
+        deployment = deployment_response.json()
+        first_step = await test_client.post(f"/paper/deployments/{deployment['id']}/step")
+        second_step = await test_client.post(f"/paper/deployments/{deployment['id']}/step")
+        third_step = await test_client.post(f"/paper/deployments/{deployment['id']}/step")
+        detail_response = await test_client.get(f"/paper/deployments/{deployment['id']}")
+        audit_response = await test_client.get("/audit-events")
+
+    app.dependency_overrides.clear()
+    engine.dispose()
+
+    detail = detail_response.json()
+    assert account_response.status_code == 201
+    assert deployment_response.status_code == 201
+    assert first_step.json()["advanced"] is True
+    assert second_step.json()["advanced"] is True
+    assert third_step.json()["advanced"] is True
+    assert detail["status"] == "running"
+    assert detail["account"]["cash_balance"] == 1200.0
+    assert detail["account"]["equity"] == 1200.0
+    assert detail["positions"][0]["quantity"] == 0.0
+    assert detail["positions"][0]["realized_pnl"] == 200.0
+    assert [trade["side"] for trade in detail["trades"]] == ["buy", "sell"]
+    assert detail["trades"][1]["pnl"] == 200.0
+    assert {event["action"] for event in audit_response.json()["audit_events"]} >= {
+        "created_paper_account",
+        "started_paper_deployment",
+        "executed_paper_step",
+    }

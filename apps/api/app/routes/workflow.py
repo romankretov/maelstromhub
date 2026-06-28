@@ -8,6 +8,16 @@ from app.db.backtest_repositories import (
     get_backtest_run,
     list_strategy_version_backtests,
 )
+from app.db.paper_repositories import (
+    create_paper_account,
+    create_paper_deployment,
+    get_paper_deployment,
+    list_paper_accounts,
+    list_paper_deployments,
+    pause_paper_deployment,
+    step_paper_deployment,
+    stop_paper_deployment,
+)
 from app.db.repositories import (
     create_idea,
     create_strategy,
@@ -31,6 +41,11 @@ from maelstromhub_core import (
     BacktestRunDetail,
     Idea,
     IdeaCreate,
+    PaperAccount,
+    PaperAccountCreate,
+    PaperDeployment,
+    PaperDeploymentCreate,
+    PaperStepResult,
     Signal,
     SignalRunResult,
     Strategy,
@@ -117,6 +132,46 @@ async def get_strategy_version_backtests(version_id: str, session: SessionDepend
 @router.get("/backtests/{backtest_id}")
 async def get_backtest(backtest_id: str, session: SessionDependency) -> BacktestRunDetail:
     return await get_backtest_run(session, backtest_id)
+
+
+@router.post("/paper/accounts", status_code=201)
+async def post_paper_account(payload: PaperAccountCreate, session: SessionDependency) -> PaperAccount:
+    return await create_paper_account(session, payload)
+
+
+@router.get("/paper/accounts")
+async def get_paper_accounts(session: SessionDependency) -> dict[str, list[PaperAccount]]:
+    return {"paper_accounts": await list_paper_accounts(session)}
+
+
+@router.post("/paper/deployments", status_code=201)
+async def post_paper_deployment(payload: PaperDeploymentCreate, session: SessionDependency) -> PaperDeployment:
+    return await create_paper_deployment(session, payload)
+
+
+@router.get("/paper/deployments")
+async def get_paper_deployments(session: SessionDependency) -> dict[str, list[PaperDeployment]]:
+    return {"paper_deployments": await list_paper_deployments(session)}
+
+
+@router.get("/paper/deployments/{deployment_id}")
+async def get_paper_deployment_detail(deployment_id: str, session: SessionDependency) -> PaperDeployment:
+    return await get_paper_deployment(session, deployment_id)
+
+
+@router.post("/paper/deployments/{deployment_id}/step")
+async def post_paper_deployment_step(deployment_id: str, session: SessionDependency) -> PaperStepResult:
+    return await step_paper_deployment(session, deployment_id)
+
+
+@router.post("/paper/deployments/{deployment_id}/pause")
+async def post_paper_deployment_pause(deployment_id: str, session: SessionDependency) -> PaperDeployment:
+    return await pause_paper_deployment(session, deployment_id)
+
+
+@router.post("/paper/deployments/{deployment_id}/stop")
+async def post_paper_deployment_stop(deployment_id: str, session: SessionDependency) -> PaperDeployment:
+    return await stop_paper_deployment(session, deployment_id)
 
 
 @router.get("/audit-events")

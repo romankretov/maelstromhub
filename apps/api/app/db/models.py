@@ -272,6 +272,77 @@ class BacktestRunORM(Base):
     equity_curve: Mapped[list["EquityCurveSnapshotORM"]] = relationship(back_populates="backtest_run", passive_deletes=True)
 
 
+class PaperAccountORM(Base):
+    __tablename__ = "paper_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    starting_balance: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    cash_balance: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    equity: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    deployments: Mapped[list["PaperDeploymentORM"]] = relationship(back_populates="account", passive_deletes=True)
+
+
+class PaperDeploymentORM(Base):
+    __tablename__ = "paper_deployments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
+    strategy_version_id: Mapped[str] = mapped_column(ForeignKey("strategy_versions.id", ondelete="CASCADE"), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    paper_account_id: Mapped[str] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    account: Mapped[PaperAccountORM] = relationship(back_populates="deployments")
+    trades: Mapped[list["PaperTradeORM"]] = relationship(back_populates="deployment", passive_deletes=True)
+    positions: Mapped[list["PaperPositionORM"]] = relationship(back_populates="deployment", passive_deletes=True)
+
+
+class PaperTradeORM(Base):
+    __tablename__ = "paper_trades"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    deployment_id: Mapped[str] = mapped_column(ForeignKey("paper_deployments.id", ondelete="CASCADE"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(80), nullable=False)
+    side: Mapped[str] = mapped_column(String(20), nullable=False)
+    price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    fees: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    pnl: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+    deployment: Mapped[PaperDeploymentORM] = relationship(back_populates="trades")
+
+
+class PaperPositionORM(Base):
+    __tablename__ = "paper_positions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    deployment_id: Mapped[str] = mapped_column(ForeignKey("paper_deployments.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(80), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    average_entry_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    unrealized_pnl: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    realized_pnl: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+
+    deployment: Mapped[PaperDeploymentORM] = relationship(back_populates="positions")
+
+
 class BacktestTradeORM(Base):
     __tablename__ = "backtest_trades"
 

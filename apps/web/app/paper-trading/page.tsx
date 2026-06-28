@@ -1,19 +1,13 @@
-import { Activity } from "lucide-react";
-
-import { EmptyState } from "@/components/shell/empty-state";
 import { PageShell } from "@/components/shell/page-shell";
+import { PaperTradingClient } from "@/components/workflow/paper-trading-client";
 
 export default function PaperTradingPage() {
   return (
     <PageShell
       title="Paper Trading"
-      description="Track future simulated execution only after a strategy has passed research and backtesting checks."
+      description="Rehearse Backtested strategies with manual simulated execution before any live trading path exists."
     >
-      <EmptyState
-        icon={Activity}
-        title="No paper trading sessions"
-        description="Paper trading is represented as a lifecycle stage only. Simulated fills, balances, and PnL are not implemented yet."
-      />
+      <PaperTradingClient />
     </PageShell>
   );
 }

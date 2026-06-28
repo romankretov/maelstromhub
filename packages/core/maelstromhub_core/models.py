@@ -384,6 +384,82 @@ class StrategyPromotionResult(DomainModel):
     evaluation: BacktestEvaluation | None = None
 
 
+class PaperAccountStatus(StrEnum):
+    ACTIVE = "active"
+    CLOSED = "closed"
+
+
+class PaperDeploymentStatus(StrEnum):
+    RUNNING = "running"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+
+
+class PaperAccountCreate(DomainModel):
+    name: str
+    starting_balance: float = 10_000.0
+
+
+class PaperAccount(DomainModel):
+    id: str
+    name: str
+    starting_balance: float
+    cash_balance: float
+    equity: float
+    status: PaperAccountStatus = PaperAccountStatus.ACTIVE
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PaperDeploymentCreate(DomainModel):
+    strategy_id: str
+    strategy_version_id: str
+    paper_account_id: str
+
+
+class PaperTrade(DomainModel):
+    id: str
+    deployment_id: str
+    timestamp: datetime
+    symbol: str
+    side: str
+    price: float
+    quantity: float
+    fees: float
+    pnl: float
+    reason: str
+
+
+class PaperPosition(DomainModel):
+    id: str
+    deployment_id: str
+    symbol: str
+    quantity: float
+    average_entry_price: float
+    unrealized_pnl: float
+    realized_pnl: float
+
+
+class PaperDeployment(DomainModel):
+    id: str
+    strategy_id: str
+    strategy_version_id: str
+    dataset_id: str
+    paper_account_id: str
+    status: PaperDeploymentStatus
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    stopped_at: datetime | None = None
+    last_processed_at: datetime | None = None
+    account: PaperAccount | None = None
+    positions: list[PaperPosition] = Field(default_factory=list)
+    trades: list[PaperTrade] = Field(default_factory=list)
+
+
+class PaperStepResult(DomainModel):
+    deployment: PaperDeployment
+    advanced: bool
+    message: str
+
+
 class AuditEvent(DomainModel):
     id: str
     actor: str
