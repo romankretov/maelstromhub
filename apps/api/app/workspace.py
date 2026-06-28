@@ -11,9 +11,11 @@ from app.db.models import (
     CandleORM,
     DatasetORM,
     IngestionJobORM,
+    StrategyORM,
     StrategyVersionORM,
     TimeframeORM,
 )
+from app.db.backtest_repositories import create_backtest_run
 from app.db.repositories import _new_id, create_audit_event
 from app.db.research_repositories import (
     SYSTEM_TIMEFRAME_INTERVALS,
@@ -23,21 +25,31 @@ from app.db.research_repositories import (
     get_feature_summary,
     run_feature_ingestion_job,
 )
-from app.db.strategy_repositories import list_strategy_templates
+from app.db.strategy_repositories import (
+    _evaluate_backtest_run,
+    create_strategy_version,
+    list_strategy_templates,
+    run_strategy_version_signals,
+)
 from app.market_intelligence import RegimeService
 from maelstromhub_core import (
     Asset,
     BacktestRun,
+    BacktestRunCreate,
     Candle,
     CandleBackfillRequest,
     Dataset,
     FeatureComputeRequest,
     IngestionJobStatus,
+    StrategyStatus,
+    StrategyVersionCreate,
+    WorkspaceBacktestResult,
     WorkspaceCandleSummary,
     WorkspaceDataHealth,
     WorkspaceLoadMarketRequest,
     WorkspaceMarketMetadata,
     WorkspaceRange,
+    WorkspaceRunBacktestRequest,
     WorkspaceState,
 )
 
@@ -153,6 +165,93 @@ class WorkspaceService:
             data_health=await self._data_health(session, dataset, candle_summary),
         )
 
+    async def run_backtest(
+        self,
+        session: AsyncSession,
+        payload: WorkspaceRunBacktestRequest,
+    ) -> WorkspaceBacktestResult:
+        symbol = _normalize_symbol(payload.symbol)
+        _, timeframe, dataset = await self._resolve_market_dataset(
+            session,
+            symbol=symbol,
+            timeframe=payload.timeframe,
+            create_missing=True,
+        )
+        assert dataset is not None
+
+        candle_summary = await self._candle_summary(session, dataset.id)
+        if candle_summary.total_candles == 0:
+            await enqueue_dataset_candle_backfill(
+                session,
+                dataset.id,
+                CandleBackfillRequest(
+                    start_time=_range_start(payload.range),
+                    end_time=datetime.now(UTC),
+                ),
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Candles are not loaded yet. Refresh data first, then run the backtest after ingestion completes.",
+            )
+
+        feature_summary = await get_feature_summary(session, dataset.id)
+        if feature_summary.total_snapshots == 0:
+            feature_job = await enqueue_dataset_feature_compute(session, dataset.id, FeatureComputeRequest())
+            await run_feature_ingestion_job(session, feature_job.id)
+            feature_summary = await get_feature_summary(session, dataset.id)
+        if feature_summary.total_snapshots == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Feature snapshots are not available yet, so this strategy cannot be evaluated.",
+            )
+
+        current_regime = await self.regime_service.current_regime(session, dataset.id)
+        if current_regime is None:
+            await self.regime_service.compute_regimes(session, dataset.id)
+
+        strategy = await self._get_or_create_workspace_strategy(
+            session,
+            symbol=symbol,
+            timeframe=timeframe.interval,
+            template_id=payload.template_id,
+        )
+        version = await create_strategy_version(
+            session,
+            strategy.id,
+            StrategyVersionCreate(
+                template_id=payload.template_id,
+                dataset_id=dataset.id,
+                parameters=payload.parameters,
+                allowed_regimes=payload.allowed_regimes,
+            ),
+        )
+        signals = await run_strategy_version_signals(session, version.id)
+        backtest = await create_backtest_run(
+            session,
+            version.id,
+            BacktestRunCreate(
+                starting_balance=payload.starting_balance,
+                fee_bps=payload.fee_bps,
+                slippage_bps=payload.slippage_bps,
+            ),
+        )
+        run_orm = await session.get(BacktestRunORM, backtest.id)
+        if run_orm is None:
+            raise HTTPException(status_code=500, detail="Backtest completed but the run record could not be loaded.")
+
+        return WorkspaceBacktestResult(
+            workspace_state=await self.state(
+                session,
+                symbol=symbol,
+                timeframe=timeframe.interval,
+                range_value=payload.range,
+            ),
+            backtest=backtest,
+            evaluation=_evaluate_backtest_run(run_orm),
+            signals_written=signals.signals_written,
+            total_signals=signals.total_signals,
+        )
+
     async def _resolve_market_dataset(
         self,
         session: AsyncSession,
@@ -261,6 +360,48 @@ class WorkspaceService:
             .limit(10)
         )
         return [BacktestRun.model_validate(run) for run in result.scalars()]
+
+    async def _get_or_create_workspace_strategy(
+        self,
+        session: AsyncSession,
+        *,
+        symbol: str,
+        timeframe: str,
+        template_id: UUID,
+    ) -> StrategyORM:
+        templates = await list_strategy_templates(session)
+        template = next((item for item in templates if item.id == template_id), None)
+        if template is None:
+            raise HTTPException(status_code=404, detail="Strategy template not found")
+        strategy_name = f"Workspace {symbol} {timeframe} {template.name}"
+        result = await session.execute(
+            select(StrategyORM)
+            .where(StrategyORM.name == strategy_name)
+            .order_by(StrategyORM.created_at.asc())
+            .limit(1)
+        )
+        strategy = result.scalar_one_or_none()
+        if strategy is not None:
+            return strategy
+
+        strategy = StrategyORM(
+            id=_new_id(),
+            name=strategy_name,
+            status=StrategyStatus.DRAFT.value,
+            description=f"Workspace-managed strategy for {symbol} {timeframe}.",
+        )
+        session.add(strategy)
+        await session.flush()
+        await create_audit_event(
+            session,
+            actor="system",
+            action="created_workspace_strategy",
+            subject=strategy.id,
+            flush=False,
+        )
+        await session.commit()
+        await session.refresh(strategy)
+        return strategy
 
     async def _data_health(
         self,

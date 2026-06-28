@@ -27,7 +27,11 @@ import { Button } from "@/components/ui/button";
 import {
   getWorkspaceState,
   loadWorkspaceMarket,
+  runWorkspaceBacktest,
   type Candle,
+  type StrategyParameterValue,
+  type StrategyTemplate,
+  type WorkspaceBacktestResult,
   type WorkspaceRange,
   type WorkspaceState,
 } from "@/lib/api-client";
@@ -37,6 +41,15 @@ const markets = ["BTC", "ETH", "SOL", "HYPE", "Manual"] as const;
 const timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 const ranges = ["7d", "30d", "90d", "180d", "1y"] as const satisfies readonly WorkspaceRange[];
 const tabs = ["Strategy", "Backtests", "Optimisation", "Notes", "Logs"] as const;
+const allowedRegimeOptions = [
+  "Bull Trend",
+  "Bear Trend",
+  "Range",
+  "Bull High Volatility",
+  "Bear High Volatility",
+  "Choppy High Volatility",
+  "Low Volatility Range",
+];
 
 type Market = (typeof markets)[number];
 type Timeframe = (typeof timeframes)[number];
@@ -54,6 +67,16 @@ export function WorkspaceShell() {
   const [status, setStatus] = useState<WorkspaceStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [strategyParameters, setStrategyParameters] = useState<Record<string, StrategyParameterValue>>({});
+  const [allowedRegimes, setAllowedRegimes] = useState<string[]>([]);
+  const [startingBalance, setStartingBalance] = useState(10_000);
+  const [feeBps, setFeeBps] = useState(5);
+  const [slippageBps, setSlippageBps] = useState(2);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [backtestResult, setBacktestResult] = useState<WorkspaceBacktestResult | null>(null);
+  const [backtestStatus, setBacktestStatus] = useState<"idle" | "running" | "error">("idle");
+  const [backtestError, setBacktestError] = useState<string | null>(null);
 
   const displayMarket = useMemo(() => {
     if (market !== "Manual") return market;
@@ -63,6 +86,24 @@ export function WorkspaceShell() {
   const selectedSymbol = displayMarket || "CUSTOM";
   const stats = useMemo(() => computeChartStats(state?.latest_candles ?? []), [state?.latest_candles]);
   const stateStage = getStateStage(state, status, error);
+  const selectedTemplate = useMemo(
+    () => state?.available_strategy_templates.find((template) => template.id === selectedTemplateId) ?? null,
+    [selectedTemplateId, state?.available_strategy_templates],
+  );
+
+  useEffect(() => {
+    const templates = state?.available_strategy_templates ?? [];
+    if (templates.length === 0) return;
+    const nextTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
+    if (nextTemplate.id !== selectedTemplateId) {
+      setSelectedTemplateId(nextTemplate.id);
+      setStrategyParameters(nextTemplate.default_parameters);
+      return;
+    }
+    setStrategyParameters((current) =>
+      Object.keys(current).length === 0 ? nextTemplate.default_parameters : current,
+    );
+  }, [selectedTemplateId, state?.available_strategy_templates]);
 
   const refreshState = useCallback(async () => {
     if (!displayMarket) return;
@@ -111,6 +152,36 @@ export function WorkspaceShell() {
     } catch (loadError) {
       setStatus("error");
       setError(errorMessage(loadError, "Unable to refresh workspace data."));
+    }
+  }
+
+  async function handleRunBacktest() {
+    if (!displayMarket || !selectedTemplate) {
+      setBacktestStatus("error");
+      setBacktestError("Select a market and strategy template before running a backtest.");
+      return;
+    }
+    setBacktestStatus("running");
+    setBacktestError(null);
+    try {
+      const result = await runWorkspaceBacktest({
+        symbol: displayMarket,
+        timeframe,
+        range,
+        template_id: selectedTemplate.id,
+        parameters: strategyParameters,
+        starting_balance: startingBalance,
+        fee_bps: feeBps,
+        slippage_bps: slippageBps,
+        allowed_regimes: allowedRegimes.length > 0 ? allowedRegimes : null,
+      });
+      setBacktestResult(result);
+      setState(result.workspace_state);
+      setActiveTab("Backtests");
+      setBacktestStatus("idle");
+    } catch (runError) {
+      setBacktestStatus("error");
+      setBacktestError(errorMessage(runError, "Unable to run workspace backtest."));
     }
   }
 
@@ -259,7 +330,39 @@ export function WorkspaceShell() {
               </button>
             ))}
           </div>
-          <BottomPanel activeTab={activeTab} market={selectedSymbol} timeframe={timeframe} state={state} />
+          <BottomPanel
+            activeTab={activeTab}
+            market={selectedSymbol}
+            timeframe={timeframe}
+            state={state}
+            selectedTemplate={selectedTemplate}
+            selectedTemplateId={selectedTemplateId}
+            onTemplateChange={(templateId) => {
+              const template = state?.available_strategy_templates.find((item) => item.id === templateId);
+              setSelectedTemplateId(templateId);
+              setStrategyParameters(template?.default_parameters ?? {});
+            }}
+            parameters={strategyParameters}
+            onParameterChange={(key, value) => setStrategyParameters((current) => ({ ...current, [key]: value }))}
+            allowedRegimes={allowedRegimes}
+            onAllowedRegimeToggle={(label) =>
+              setAllowedRegimes((current) =>
+                current.includes(label) ? current.filter((item) => item !== label) : [...current, label],
+              )
+            }
+            startingBalance={startingBalance}
+            feeBps={feeBps}
+            slippageBps={slippageBps}
+            onStartingBalanceChange={setStartingBalance}
+            onFeeBpsChange={setFeeBps}
+            onSlippageBpsChange={setSlippageBps}
+            advancedOpen={advancedOpen}
+            onAdvancedOpenChange={setAdvancedOpen}
+            backtestResult={backtestResult}
+            backtestStatus={backtestStatus}
+            backtestError={backtestError}
+            onRunBacktest={handleRunBacktest}
+          />
         </section>
       </div>
     </div>
@@ -567,31 +670,192 @@ function BottomPanel({
   market,
   timeframe,
   state,
+  selectedTemplate,
+  selectedTemplateId,
+  onTemplateChange,
+  parameters,
+  onParameterChange,
+  allowedRegimes,
+  onAllowedRegimeToggle,
+  startingBalance,
+  feeBps,
+  slippageBps,
+  onStartingBalanceChange,
+  onFeeBpsChange,
+  onSlippageBpsChange,
+  advancedOpen,
+  onAdvancedOpenChange,
+  backtestResult,
+  backtestStatus,
+  backtestError,
+  onRunBacktest,
 }: {
   activeTab: Tab;
   market: string;
   timeframe: Timeframe;
   state: WorkspaceState | null;
+  selectedTemplate: StrategyTemplate | null;
+  selectedTemplateId: string;
+  onTemplateChange: (templateId: string) => void;
+  parameters: Record<string, StrategyParameterValue>;
+  onParameterChange: (key: string, value: StrategyParameterValue) => void;
+  allowedRegimes: string[];
+  onAllowedRegimeToggle: (label: string) => void;
+  startingBalance: number;
+  feeBps: number;
+  slippageBps: number;
+  onStartingBalanceChange: (value: number) => void;
+  onFeeBpsChange: (value: number) => void;
+  onSlippageBpsChange: (value: number) => void;
+  advancedOpen: boolean;
+  onAdvancedOpenChange: (open: boolean) => void;
+  backtestResult: WorkspaceBacktestResult | null;
+  backtestStatus: "idle" | "running" | "error";
+  backtestError: string | null;
+  onRunBacktest: () => void;
 }) {
   if (activeTab === "Strategy") {
+    const essentialKeys = selectedTemplate ? essentialParameterKeys(selectedTemplate) : [];
+    const advancedKeys = selectedTemplate
+      ? Object.keys(selectedTemplate.default_parameters).filter((key) => !essentialKeys.includes(key))
+      : [];
+    const canRun = Boolean(state?.dataset_id && selectedTemplate && state.candle_summary.total_candles > 0);
+
     return (
-      <PanelGrid>
-        <PanelItem icon={Braces} label="Templates" value={`${state?.available_strategy_templates.length ?? 0} available`} />
-        <PanelItem icon={Settings2} label="Parameters" value="Backtest orchestration pending" />
-        <PanelItem icon={ShieldCheck} label="Allowed Regimes" value={state?.current_regime?.regime_label ?? "Compute regime first"} />
-        <PanelItem icon={Play} label="Ready State" value={`Configure ${market} ${timeframe}`} />
-      </PanelGrid>
+      <div className="grid gap-4 p-4 xl:grid-cols-[360px_minmax(0,1fr)_280px]">
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
+            <Braces className="h-4 w-4" aria-hidden="true" />
+            Template
+          </div>
+          <select
+            value={selectedTemplateId}
+            onChange={(event) => onTemplateChange(event.target.value)}
+            className="mt-3 h-10 w-full rounded-md border border-zinc-700 bg-[#0d1017] px-3 text-sm text-zinc-100 outline-none"
+          >
+            {(state?.available_strategy_templates ?? []).map((template) => (
+              <option key={template.id} value={template.id} className="bg-zinc-950">
+                {template.name}
+              </option>
+            ))}
+          </select>
+          <p className="mt-3 text-sm leading-5 text-zinc-400">
+            {selectedTemplate?.description ?? "Load a market to fetch strategy templates."}
+          </p>
+        </section>
+
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
+              <Settings2 className="h-4 w-4" aria-hidden="true" />
+              Parameters
+            </div>
+            <button
+              type="button"
+              onClick={() => onAdvancedOpenChange(!advancedOpen)}
+              className="text-xs text-zinc-400 hover:text-zinc-100"
+            >
+              {advancedOpen ? "Hide advanced" : "Advanced"}
+            </button>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {essentialKeys.map((key) => (
+              <ParameterInput key={key} paramKey={key} value={parameters[key]} onChange={onParameterChange} />
+            ))}
+            {advancedOpen
+              ? advancedKeys.map((key) => (
+                  <ParameterInput key={key} paramKey={key} value={parameters[key]} onChange={onParameterChange} />
+                ))
+              : null}
+          </div>
+        </section>
+
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+            Regime Filter
+          </div>
+          <div className="mt-3 grid max-h-36 gap-2 overflow-y-auto pr-1 text-sm">
+            {allowedRegimeOptions.map((label) => (
+              <label key={label} className="flex items-center gap-2 text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={allowedRegimes.includes(label)}
+                  onChange={() => onAllowedRegimeToggle(label)}
+                  className="h-4 w-4 accent-emerald-400"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <SmallNumberInput label="Balance" value={startingBalance} onChange={onStartingBalanceChange} />
+            <SmallNumberInput label="Fee bps" value={feeBps} onChange={onFeeBpsChange} />
+            <SmallNumberInput label="Slip bps" value={slippageBps} onChange={onSlippageBpsChange} />
+          </div>
+          {backtestStatus === "error" ? <p className="mt-3 text-sm text-red-300">{backtestError}</p> : null}
+          <Button
+            type="button"
+            disabled={!canRun || backtestStatus === "running"}
+            onClick={onRunBacktest}
+            className="mt-4 h-10 w-full gap-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 shadow-none hover:bg-emerald-500/20"
+          >
+            {backtestStatus === "running" ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Play className="h-4 w-4" aria-hidden="true" />
+            )}
+            Run Backtest
+          </Button>
+        </section>
+      </div>
     );
   }
 
   if (activeTab === "Backtests") {
+    const backtest = backtestResult?.backtest;
+    const metrics = backtest?.metrics ?? state?.latest_backtests[0]?.metrics ?? {};
     return (
-      <PanelGrid>
-        <PanelItem icon={BarChart3} label="Latest Runs" value={`${state?.latest_backtests.length ?? 0} found`} />
-        <PanelItem icon={TrendingUp} label="Total Return" value="Run backtest next" />
-        <PanelItem icon={Activity} label="Trade Count" value="--" />
-        <PanelItem icon={ShieldCheck} label="Promotion Gate" value="Waiting for backtest" />
-      </PanelGrid>
+      <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase text-zinc-500">Latest Backtest</p>
+              <h2 className="mt-1 text-lg font-semibold text-zinc-100">
+                {backtest ? `${market} ${timeframe}` : "No workspace backtest yet"}
+              </h2>
+            </div>
+            <span className="rounded border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-sm text-emerald-200">
+              {backtestResult?.evaluation.verdict ?? "Waiting"}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-5">
+            <MetricBox label="Return" value={metricPercent(metrics["total_return"])} />
+            <MetricBox label="Max Drawdown" value={metricPercent(metrics["max_drawdown"])} />
+            <MetricBox label="Win Rate" value={metricPercent(metrics["win_rate"])} />
+            <MetricBox label="Profit Factor" value={metricNumber(metrics["profit_factor"])} />
+            <MetricBox label="Trades" value={String(metricRaw(metrics["trade_count"]) ?? "--")} />
+          </div>
+          {backtest ? <EquityCurveChart snapshots={backtest.equity_curve} /> : null}
+          {backtest ? <TradeTable trades={backtest.trades} /> : null}
+        </section>
+
+        <section className="rounded-md border border-zinc-800 bg-black p-4">
+          <div className="flex items-center gap-2 text-xs uppercase text-zinc-500">
+            <Activity className="h-4 w-4" aria-hidden="true" />
+            Regime Performance
+          </div>
+          <RegimePerformance metrics={metrics} />
+          <div className="mt-4 rounded-md border border-zinc-800 bg-[#0d1017] p-3">
+            <p className="text-xs uppercase text-zinc-500">Signals</p>
+            <p className="mt-2 text-sm text-zinc-300">
+              {backtestResult
+                ? `${backtestResult.signals_written} written / ${backtestResult.total_signals} total`
+                : "Run a workspace backtest to generate signals."}
+            </p>
+          </div>
+        </section>
+      </div>
     );
   }
 
@@ -631,6 +895,144 @@ function BottomPanel({
 
 function PanelGrid({ children }: { children: ReactNode }) {
   return <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">{children}</div>;
+}
+
+function ParameterInput({
+  paramKey,
+  value,
+  onChange,
+}: {
+  paramKey: string;
+  value: StrategyParameterValue;
+  onChange: (key: string, value: StrategyParameterValue) => void;
+}) {
+  return (
+    <label className="text-xs uppercase text-zinc-500">
+      {formatParamLabel(paramKey)}
+      <input
+        type="number"
+        value={typeof value === "number" ? value : ""}
+        onChange={(event) => onChange(paramKey, Number(event.target.value))}
+        className="mt-1 h-9 w-full rounded-md border border-zinc-700 bg-[#0d1017] px-3 text-sm text-zinc-100 outline-none"
+      />
+    </label>
+  );
+}
+
+function SmallNumberInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="text-[11px] uppercase text-zinc-500">
+      {label}
+      <input
+        type="number"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="mt-1 h-8 w-full rounded-md border border-zinc-700 bg-[#0d1017] px-2 text-xs text-zinc-100 outline-none"
+      />
+    </label>
+  );
+}
+
+function MetricBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-zinc-800 bg-[#0d1017] p-3">
+      <p className="text-[11px] uppercase text-zinc-500">{label}</p>
+      <p className="mt-2 text-sm font-medium text-zinc-100">{value}</p>
+    </div>
+  );
+}
+
+function EquityCurveChart({ snapshots }: { snapshots: WorkspaceBacktestResult["backtest"]["equity_curve"] }) {
+  if (snapshots.length === 0) {
+    return <p className="mt-4 text-sm text-zinc-500">No equity curve snapshots were generated.</p>;
+  }
+  const width = 760;
+  const height = 160;
+  const values = snapshots.map((snapshot) => snapshot.equity);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(max - min, 1);
+  const points = values
+    .map((value, index) => {
+      const x = snapshots.length === 1 ? width / 2 : (index / (snapshots.length - 1)) * width;
+      const y = height - ((value - min) / range) * height;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="mt-4 h-40 w-full rounded-md border border-zinc-800 bg-[#050608]">
+      <polyline points={points} fill="none" stroke="#34d399" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function TradeTable({ trades }: { trades: WorkspaceBacktestResult["backtest"]["trades"] }) {
+  if (trades.length === 0) return <p className="mt-4 text-sm text-zinc-500">No completed trades in this run.</p>;
+  return (
+    <div className="mt-4 max-h-44 overflow-auto rounded-md border border-zinc-800">
+      <table className="w-full text-left text-xs">
+        <thead className="sticky top-0 bg-[#0d1017] text-zinc-500">
+          <tr>
+            <th className="px-3 py-2 font-medium">Time</th>
+            <th className="px-3 py-2 font-medium">Side</th>
+            <th className="px-3 py-2 font-medium">Entry</th>
+            <th className="px-3 py-2 font-medium">Exit</th>
+            <th className="px-3 py-2 font-medium">PnL</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-900 text-zinc-300">
+          {trades.slice(0, 20).map((trade) => (
+            <tr key={trade.id}>
+              <td className="px-3 py-2">{formatDateTime(trade.timestamp)}</td>
+              <td className="px-3 py-2">{trade.side}</td>
+              <td className="px-3 py-2">{formatPrice(trade.entry_price)}</td>
+              <td className="px-3 py-2">{formatPrice(trade.exit_price)}</td>
+              <td className={cn("px-3 py-2", trade.pnl >= 0 ? "text-emerald-300" : "text-red-300")}>
+                {formatPrice(trade.pnl)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RegimePerformance({ metrics }: { metrics: Record<string, unknown> }) {
+  const pnl = objectMetric(metrics.pnl_by_regime);
+  const counts = objectMetric(metrics.trade_count_by_regime);
+  const winRates = objectMetric(metrics.win_rate_by_regime);
+  const labels = Array.from(new Set([...Object.keys(pnl), ...Object.keys(counts), ...Object.keys(winRates)]));
+  const coverage = objectMetric(metrics.regime_coverage);
+  if (labels.length === 0) {
+    return (
+      <p className="mt-3 text-sm leading-5 text-zinc-500">
+        Regime coverage {metricPercent(coverage.coverage_ratio)}. No completed trades were attributed to regimes.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-3 space-y-2">
+      {labels.map((label) => (
+        <div key={label} className="rounded-md border border-zinc-800 bg-[#0d1017] p-3 text-sm">
+          <p className="font-medium text-zinc-100">{label}</p>
+          <p className="mt-1 text-zinc-400">
+            PnL {metricNumber(pnl[label])} / trades {metricRaw(counts[label]) ?? 0} / win{" "}
+            {metricPercent(winRates[label])}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function PanelItem({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
@@ -709,6 +1111,38 @@ function regimeMissingDetail(state: WorkspaceState | null) {
   if (state.candle_summary.total_candles === 0) return "Candles are required before regime detection.";
   if (!state.feature_summary || state.feature_summary.total_snapshots === 0) return "Stats are required before regime detection.";
   return "Regime computation is pending.";
+}
+
+function essentialParameterKeys(template: StrategyTemplate) {
+  const name = template.name.toLowerCase();
+  if (name.includes("sma")) return ["fast_window", "slow_window"];
+  if (name.includes("rsi")) return ["oversold", "overbought"];
+  return Object.keys(template.default_parameters);
+}
+
+function formatParamLabel(key: string) {
+  return key.replaceAll("_", " ");
+}
+
+function metricRaw(value: unknown) {
+  return typeof value === "number" ? value : null;
+}
+
+function metricNumber(value: unknown) {
+  const numberValue = metricRaw(value);
+  if (numberValue === null) return "--";
+  return numberValue.toFixed(2);
+}
+
+function metricPercent(value: unknown) {
+  const numberValue = metricRaw(value);
+  if (numberValue === null) return "--";
+  return formatPercent(numberValue);
+}
+
+function objectMetric(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
 function formatPrice(value: number | undefined | null) {

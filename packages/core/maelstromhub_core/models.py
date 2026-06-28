@@ -448,6 +448,15 @@ class WorkspaceLoadMarketRequest(DomainModel):
     range: WorkspaceRange
 
 
+class WorkspaceRunBacktestRequest(WorkspaceLoadMarketRequest):
+    template_id: UUID
+    parameters: StrategyParameters = Field(default_factory=dict)
+    starting_balance: float = 10_000.0
+    fee_bps: float = 5.0
+    slippage_bps: float = 2.0
+    allowed_regimes: list[str] | None = None
+
+
 class WorkspaceMarketMetadata(DomainModel):
     symbol: str
     provider: str = "hyperliquid"
@@ -479,6 +488,14 @@ class WorkspaceState(DomainModel):
     available_strategy_templates: list[StrategyTemplate] = Field(default_factory=list)
     latest_backtests: list[BacktestRun] = Field(default_factory=list)
     data_health: WorkspaceDataHealth
+
+
+class WorkspaceBacktestResult(DomainModel):
+    workspace_state: WorkspaceState
+    backtest: BacktestRunDetail
+    evaluation: BacktestEvaluation
+    signals_written: int
+    total_signals: int
 
 
 class PaperAccountStatus(StrEnum):

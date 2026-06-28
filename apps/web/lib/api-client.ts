@@ -400,6 +400,15 @@ export type WorkspaceLoadMarketRequest = {
   range: WorkspaceRange;
 };
 
+export type WorkspaceRunBacktestRequest = WorkspaceLoadMarketRequest & {
+  template_id: string;
+  parameters: Record<string, StrategyParameterValue>;
+  starting_balance: number;
+  fee_bps: number;
+  slippage_bps: number;
+  allowed_regimes?: string[] | null;
+};
+
 export type WorkspaceMarketMetadata = {
   symbol: string;
   provider: string;
@@ -431,6 +440,14 @@ export type WorkspaceState = {
   available_strategy_templates: StrategyTemplate[];
   latest_backtests: BacktestRun[];
   data_health: WorkspaceDataHealth;
+};
+
+export type WorkspaceBacktestResult = {
+  workspace_state: WorkspaceState;
+  backtest: BacktestRunDetail;
+  evaluation: BacktestEvaluation;
+  signals_written: number;
+  total_signals: number;
 };
 
 export type FeatureCreate = {
@@ -571,6 +588,15 @@ export async function getWorkspaceState(payload: WorkspaceLoadMarketRequest): Pr
     range: payload.range,
   });
   return request<WorkspaceState>(`/workspace/state?${params.toString()}`);
+}
+
+export async function runWorkspaceBacktest(
+  payload: WorkspaceRunBacktestRequest,
+): Promise<WorkspaceBacktestResult> {
+  return request<WorkspaceBacktestResult>("/workspace/run-backtest", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function createPaperAccount(payload: PaperAccountCreate): Promise<PaperAccount> {
