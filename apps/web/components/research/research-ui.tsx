@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Database, FlaskConical, Layers, Microscope, Plus, Timer } from "lucide-react";
+import { ArrowRight, Database, FlaskConical, Layers, Microscope, Plus, RefreshCw, Timer } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { ErrorState, FeedbackState, LoadingState } from "@/components/shell/feedback";
@@ -18,6 +18,7 @@ import {
   getAssets,
   getDataset,
   getDatasetCandles,
+  getDatasetIngestionJobs,
   getDatasets,
   getExperiments,
   getFeatures,
@@ -27,6 +28,7 @@ import {
   type Dataset,
   type Experiment,
   type Feature,
+  type IngestionJob,
   type Timeframe,
 } from "@/lib/api-client";
 
@@ -476,8 +478,10 @@ export function ExperimentsClient() {
 export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -485,12 +489,14 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const [loadedDataset, loadedCandles] = await Promise.all([
+      const [loadedDataset, loadedCandles, loadedJobs] = await Promise.all([
         getDataset(datasetId),
         getDatasetCandles(datasetId),
+        getDatasetIngestionJobs(datasetId),
       ]);
       setDataset(loadedDataset);
       setCandles(loadedCandles);
+      setJobs(loadedJobs);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load dataset.");
     } finally {
@@ -507,18 +513,29 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
     setError(null);
     setNotice(null);
     try {
-      const result = await backfillDatasetCandles(datasetId);
-      const [loadedDataset, loadedCandles] = await Promise.all([
+      const job = await backfillDatasetCandles(datasetId);
+      const [loadedDataset, loadedCandles, loadedJobs] = await Promise.all([
         getDataset(datasetId),
         getDatasetCandles(datasetId),
+        getDatasetIngestionJobs(datasetId),
       ]);
       setDataset(loadedDataset);
       setCandles(loadedCandles);
-      setNotice(`Backfill complete: ${result.inserted} inserted, ${result.updated} updated.`);
+      setJobs(loadedJobs);
+      setNotice(`Backfill job queued: ${job.id}.`);
     } catch (backfillError) {
       setError(backfillError instanceof Error ? backfillError.message : "Unable to backfill candles.");
     } finally {
       setBackfilling(false);
+    }
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await loadDataset();
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -555,10 +572,42 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
             </p>
             <p className="mt-3 text-xs text-muted-foreground">Created {formatDate(dataset.created_at)}</p>
           </div>
-          <Button onClick={handleBackfill} disabled={backfilling}>
-            {backfilling ? "Backfilling" : "Backfill candles"}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
+              <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+              {refreshing ? "Refreshing" : "Refresh"}
+            </Button>
+            <Button onClick={handleBackfill} disabled={backfilling}>
+              {backfilling ? "Queueing" : "Backfill data"}
+            </Button>
+          </div>
         </div>
+      </section>
+
+      <section className="rounded-lg border bg-card p-5">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-base font-semibold">Ingestion jobs</h2>
+          <p className="text-sm text-muted-foreground">{jobs.length} jobs</p>
+        </div>
+        {jobs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No ingestion jobs have been queued for this dataset.</p>
+        ) : (
+          <div className="divide-y">
+            {jobs.map((job) => (
+              <div key={job.id} className="py-3 text-sm">
+                <div className="flex items-center justify-between gap-4">
+                  <p className="font-medium">{job.id}</p>
+                  <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">{job.status}</span>
+                </div>
+                <p className="mt-1 text-muted-foreground">
+                  {job.candles_written} candles written
+                  {job.finished_at ? `, finished ${formatDate(job.finished_at)}` : ""}
+                </p>
+                {job.error_message ? <p className="mt-1 text-red-700">{job.error_message}</p> : null}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {candles.length === 0 ? (

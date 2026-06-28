@@ -104,6 +104,26 @@ class CandleBackfillResult(DomainModel):
     status: str
 
 
+class IngestionJobStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class IngestionJob(DomainModel):
+    id: str
+    dataset_id: str
+    status: IngestionJobStatus
+    requested_start: datetime | None = None
+    requested_end: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    candles_written: int = 0
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class FeatureCreate(DomainModel):
     dataset_id: str
     name: str

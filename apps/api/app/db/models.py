@@ -110,6 +110,7 @@ class DatasetORM(Base):
     features: Mapped[list["FeatureORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     experiments: Mapped[list["ExperimentORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     candles: Mapped[list["CandleORM"]] = relationship(back_populates="dataset", passive_deletes=True)
+    ingestion_jobs: Mapped[list["IngestionJobORM"]] = relationship(back_populates="dataset", passive_deletes=True)
 
 
 class CandleORM(Base):
@@ -132,6 +133,27 @@ class CandleORM(Base):
     )
 
     dataset: Mapped[DatasetORM] = relationship(back_populates="candles")
+
+
+class IngestionJobORM(Base):
+    __tablename__ = "ingestion_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    requested_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    candles_written: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    dataset: Mapped[DatasetORM] = relationship(back_populates="ingestion_jobs")
 
 
 class FeatureORM(Base):

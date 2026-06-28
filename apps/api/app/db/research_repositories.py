@@ -1,12 +1,12 @@
 from typing import Any, TypeVar
 
 from fastapi import HTTPException
-from datetime import UTC
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssetORM, CandleORM, DatasetORM, ExperimentORM, FeatureORM, TimeframeORM
+from app.db.models import AssetORM, CandleORM, DatasetORM, ExperimentORM, FeatureORM, IngestionJobORM, TimeframeORM
 from app.db.repositories import _new_id, create_audit_event
 from app.providers.candles import CandleProvider, ProviderCandle, default_backfill_window
 from maelstromhub_core import (
@@ -26,6 +26,8 @@ from maelstromhub_core import (
     Feature,
     FeatureCreate,
     FeatureUpdate,
+    IngestionJob,
+    IngestionJobStatus,
     Timeframe,
     TimeframeCreate,
     TimeframeUpdate,
@@ -199,6 +201,122 @@ async def backfill_dataset_candles(
         dataset.last_ingestion_error = str(error)
         await session.commit()
         raise
+
+
+async def enqueue_dataset_candle_backfill(
+    session: AsyncSession,
+    dataset_id: str,
+    payload: CandleBackfillRequest,
+) -> IngestionJob:
+    await _get_or_404(session, DatasetORM, dataset_id)
+    requested_start, requested_end = _resolve_backfill_window(payload)
+    job = IngestionJobORM(
+        id=_new_id("ingestion-job"),
+        dataset_id=dataset_id,
+        status=IngestionJobStatus.QUEUED.value,
+        requested_start=requested_start,
+        requested_end=requested_end,
+    )
+    session.add(job)
+    await session.flush()
+    await create_audit_event(
+        session,
+        actor="system",
+        action="queued_ingestion_job",
+        subject=job.id,
+        flush=False,
+    )
+    await session.commit()
+    await session.refresh(job)
+    return IngestionJob.model_validate(job)
+
+
+async def get_ingestion_job(session: AsyncSession, job_id: str) -> IngestionJob:
+    return IngestionJob.model_validate(await _get_or_404(session, IngestionJobORM, job_id))
+
+
+async def list_dataset_ingestion_jobs(session: AsyncSession, dataset_id: str) -> list[IngestionJob]:
+    await _get_or_404(session, DatasetORM, dataset_id)
+    result = await session.execute(
+        select(IngestionJobORM)
+        .where(IngestionJobORM.dataset_id == dataset_id)
+        .order_by(IngestionJobORM.created_at.desc())
+    )
+    return [IngestionJob.model_validate(job) for job in result.scalars()]
+
+
+async def run_next_queued_ingestion_job(
+    session: AsyncSession,
+    provider: CandleProvider,
+) -> IngestionJob | None:
+    result = await session.execute(
+        select(IngestionJobORM)
+        .where(IngestionJobORM.status == IngestionJobStatus.QUEUED.value)
+        .order_by(IngestionJobORM.created_at.asc())
+        .limit(1)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+    return await run_ingestion_job(session, job.id, provider)
+
+
+async def run_ingestion_job(
+    session: AsyncSession,
+    job_id: str,
+    provider: CandleProvider,
+) -> IngestionJob:
+    job = await _get_or_404(session, IngestionJobORM, job_id)
+    dataset = await _get_or_404(session, DatasetORM, job.dataset_id)
+    asset = await _get_or_404(session, AssetORM, dataset.asset_id)
+    timeframe = await _get_or_404(session, TimeframeORM, dataset.timeframe_id)
+
+    job.status = IngestionJobStatus.RUNNING.value
+    job.started_at = datetime.now(UTC)
+    dataset.last_ingestion_status = IngestionJobStatus.RUNNING.value
+    dataset.last_ingestion_error = None
+    await session.commit()
+
+    try:
+        provider_candles = await provider.get_historical_candles(
+            symbol=asset.symbol,
+            interval=timeframe.interval,
+            start_time=job.requested_start,
+            end_time=job.requested_end,
+        )
+        inserted, updated = await _upsert_candles(session, dataset.id, provider_candles)
+        await _refresh_dataset_candle_stats(session, dataset)
+        job.status = IngestionJobStatus.SUCCEEDED.value
+        job.finished_at = datetime.now(UTC)
+        job.candles_written = inserted + updated
+        job.error_message = None
+        dataset.last_ingestion_status = IngestionJobStatus.SUCCEEDED.value
+        dataset.last_ingestion_error = None
+        await create_audit_event(
+            session,
+            actor="system",
+            action="succeeded_ingestion_job",
+            subject=job.id,
+            flush=False,
+        )
+        await session.commit()
+    except Exception as error:
+        job.status = IngestionJobStatus.FAILED.value
+        job.finished_at = datetime.now(UTC)
+        job.error_message = str(error)
+        dataset.last_ingestion_status = IngestionJobStatus.FAILED.value
+        dataset.last_ingestion_error = str(error)
+        await create_audit_event(
+            session,
+            actor="system",
+            action="failed_ingestion_job",
+            subject=job.id,
+            flush=False,
+        )
+        await session.commit()
+
+    await session.refresh(job)
+    return IngestionJob.model_validate(job)
 
 
 def _resolve_backfill_window(payload: CandleBackfillRequest):

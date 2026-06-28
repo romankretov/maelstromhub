@@ -8,9 +8,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
+from app.db.research_repositories import (
+    create_asset,
+    create_dataset,
+    create_timeframe,
+    enqueue_dataset_candle_backfill,
+    get_dataset,
+    list_dataset_candles,
+    run_ingestion_job,
+)
 from app.db.session import get_session
 from app.main import app
-from app.providers.candles import ProviderCandle, get_candle_provider
+from app.providers.candles import ProviderCandle
+from maelstromhub_core import AssetCreate, CandleBackfillRequest, DatasetCreate, TimeframeCreate
 
 
 class AsyncSessionAdapter:
@@ -95,11 +105,6 @@ class FakeCandleProvider:
                 trade_count=6,
             ),
         ]
-
-
-async def get_fake_candle_provider() -> FakeCandleProvider:
-    return FakeCandleProvider()
-
 
 @pytest.mark.anyio
 async def test_ideas_start_empty(client: httpx.AsyncClient) -> None:
@@ -271,25 +276,64 @@ async def test_research_update_get_and_delete(client: httpx.AsyncClient) -> None
 
 
 @pytest.mark.anyio
-async def test_backfill_dataset_candles_is_idempotent_and_audited(client: httpx.AsyncClient) -> None:
+async def test_backfill_endpoint_queues_ingestion_job(client: httpx.AsyncClient) -> None:
     _, _, dataset = await create_research_chain(client)
-    app.dependency_overrides[get_candle_provider] = get_fake_candle_provider
 
-    first_response = await client.post(f"/datasets/{dataset['id']}/backfill-candles", json={})
-    second_response = await client.post(f"/datasets/{dataset['id']}/backfill-candles", json={})
-    candles_response = await client.get(f"/datasets/{dataset['id']}/candles")
-    dataset_response = await client.get(f"/datasets/{dataset['id']}")
+    response = await client.post(f"/datasets/{dataset['id']}/backfill-candles", json={})
+    job = response.json()
+    job_response = await client.get(f"/ingestion-jobs/{job['id']}")
+    dataset_jobs_response = await client.get(f"/datasets/{dataset['id']}/ingestion-jobs")
     audit_response = await client.get("/audit-events")
 
-    assert first_response.status_code == 200
-    assert first_response.json()["inserted"] == 2
-    assert first_response.json()["updated"] == 0
-    assert second_response.status_code == 200
-    assert second_response.json()["inserted"] == 0
-    assert second_response.json()["updated"] == 2
-    assert candles_response.status_code == 200
-    assert len(candles_response.json()["candles"]) == 2
-    assert candles_response.json()["candles"][0]["close"] == 105.0
-    assert dataset_response.json()["candle_count"] == 2
-    assert dataset_response.json()["last_ingestion_status"] == "success"
-    assert audit_response.json()["audit_events"][0]["action"] == "backfilled_candles"
+    assert response.status_code == 200
+    assert job["id"].startswith("ingestion-job-")
+    assert job["status"] == "queued"
+    assert job_response.json()["id"] == job["id"]
+    assert dataset_jobs_response.json()["ingestion_jobs"][0]["id"] == job["id"]
+    assert audit_response.json()["audit_events"][0]["action"] == "queued_ingestion_job"
+
+
+@pytest.mark.anyio
+async def test_worker_execution_backfills_candles_idempotently_and_audits() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    session_factory = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    with session_factory() as sync_session:
+        session = AsyncSessionAdapter(sync_session)
+        asset = await create_asset(
+            session,
+            AssetCreate(symbol="BTC", venue="hyperliquid", description="Bitcoin perpetual"),
+        )
+        timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+        dataset = await create_dataset(
+            session,
+            DatasetCreate(
+                asset_id=asset.id,
+                timeframe_id=timeframe.id,
+                name="BTC 1h research dataset",
+                description="Dataset metadata only.",
+            ),
+        )
+        first_job = await enqueue_dataset_candle_backfill(session, dataset.id, CandleBackfillRequest())
+        second_job = await enqueue_dataset_candle_backfill(session, dataset.id, CandleBackfillRequest())
+
+        first_result = await run_ingestion_job(session, first_job.id, FakeCandleProvider())
+        second_result = await run_ingestion_job(session, second_job.id, FakeCandleProvider())
+        candles = await list_dataset_candles(session, dataset.id)
+        updated_dataset = await get_dataset(session, dataset.id)
+
+    engine.dispose()
+
+    assert first_result.status == "succeeded"
+    assert first_result.candles_written == 2
+    assert second_result.status == "succeeded"
+    assert second_result.candles_written == 2
+    assert len(candles) == 2
+    assert candles[0].close == 105.0
+    assert updated_dataset.candle_count == 2
+    assert updated_dataset.last_ingestion_status == "succeeded"

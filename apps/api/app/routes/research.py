@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.research_repositories import (
-    backfill_dataset_candles,
     create_asset,
     create_dataset,
     create_experiment,
@@ -19,8 +18,11 @@ from app.db.research_repositories import (
     get_dataset,
     get_experiment,
     get_feature,
+    get_ingestion_job,
     get_timeframe,
+    enqueue_dataset_candle_backfill,
     list_dataset_candles,
+    list_dataset_ingestion_jobs,
     list_assets,
     list_datasets,
     list_experiments,
@@ -33,14 +35,12 @@ from app.db.research_repositories import (
     update_timeframe,
 )
 from app.db.session import get_session
-from app.providers.candles import CandleProvider, get_candle_provider
 from maelstromhub_core import (
     Asset,
     AssetCreate,
     AssetUpdate,
     Candle,
     CandleBackfillRequest,
-    CandleBackfillResult,
     Dataset,
     DatasetCreate,
     DatasetUpdate,
@@ -50,6 +50,7 @@ from maelstromhub_core import (
     Feature,
     FeatureCreate,
     FeatureUpdate,
+    IngestionJob,
     Timeframe,
     TimeframeCreate,
     TimeframeUpdate,
@@ -58,7 +59,6 @@ from maelstromhub_core import (
 router = APIRouter()
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
-CandleProviderDependency = Annotated[CandleProvider, Depends(get_candle_provider)]
 
 
 @router.get("/assets")
@@ -128,14 +128,18 @@ async def post_dataset_candle_backfill(
     dataset_id: str,
     payload: CandleBackfillRequest,
     session: SessionDependency,
-    provider: CandleProviderDependency,
-) -> CandleBackfillResult:
-    return await backfill_dataset_candles(session, dataset_id, payload, provider)
+) -> IngestionJob:
+    return await enqueue_dataset_candle_backfill(session, dataset_id, payload)
 
 
 @router.get("/datasets/{dataset_id}/candles")
 async def get_dataset_candles(dataset_id: str, session: SessionDependency) -> dict[str, list[Candle]]:
     return {"candles": await list_dataset_candles(session, dataset_id)}
+
+
+@router.get("/datasets/{dataset_id}/ingestion-jobs")
+async def get_dataset_ingestion_jobs(dataset_id: str, session: SessionDependency) -> dict[str, list[IngestionJob]]:
+    return {"ingestion_jobs": await list_dataset_ingestion_jobs(session, dataset_id)}
 
 
 @router.get("/datasets/{dataset_id}")
@@ -152,6 +156,11 @@ async def patch_dataset(dataset_id: str, payload: DatasetUpdate, session: Sessio
 async def remove_dataset(dataset_id: str, session: SessionDependency) -> Response:
     await delete_dataset(session, dataset_id)
     return Response(status_code=204)
+
+
+@router.get("/ingestion-jobs/{job_id}")
+async def get_ingestion_job_by_id(job_id: str, session: SessionDependency) -> IngestionJob:
+    return await get_ingestion_job(session, job_id)
 
 
 @router.get("/features")

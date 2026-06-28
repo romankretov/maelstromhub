@@ -140,6 +140,21 @@ export type CandleBackfillResult = {
   status: string;
 };
 
+export type IngestionJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export type IngestionJob = {
+  id: string;
+  dataset_id: string;
+  status: IngestionJobStatus;
+  requested_start: string | null;
+  requested_end: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  candles_written: number;
+  error_message: string | null;
+  created_at: string;
+};
+
 export type FeatureCreate = {
   dataset_id: string;
   name: string;
@@ -252,11 +267,20 @@ export async function getDatasetCandles(datasetId: string): Promise<Candle[]> {
 export async function backfillDatasetCandles(
   datasetId: string,
   payload: CandleBackfillRequest = {},
-): Promise<CandleBackfillResult> {
-  return request<CandleBackfillResult>(`/datasets/${datasetId}/backfill-candles`, {
+): Promise<IngestionJob> {
+  return request<IngestionJob>(`/datasets/${datasetId}/backfill-candles`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function getIngestionJob(jobId: string): Promise<IngestionJob> {
+  return request<IngestionJob>(`/ingestion-jobs/${jobId}`);
+}
+
+export async function getDatasetIngestionJobs(datasetId: string): Promise<IngestionJob[]> {
+  const body = await request<{ ingestion_jobs: IngestionJob[] }>(`/datasets/${datasetId}/ingestion-jobs`);
+  return body.ingestion_jobs;
 }
 
 export async function getFeatures(): Promise<Feature[]> {

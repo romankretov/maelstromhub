@@ -1,7 +1,11 @@
 import logging
 import time
 
-from maelstromhub_core import ResearchRun, ResearchRunStatus
+import asyncio
+
+from app.db.research_repositories import run_next_queued_ingestion_job
+from app.db.session import async_session_factory
+from app.providers.candles import HyperliquidCandleProvider
 
 from worker.config import settings
 
@@ -9,19 +13,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("maelstromhub.worker")
 
 
-def run_once() -> None:
-    placeholder = ResearchRun(
-        id="bootstrap",
-        name="Worker bootstrap",
-        status=ResearchRunStatus.PENDING,
-    )
-    logger.info("worker idle", extra={"research_run": placeholder.model_dump(mode="json")})
+async def run_once() -> None:
+    async with async_session_factory() as session:
+        job = await run_next_queued_ingestion_job(session, HyperliquidCandleProvider())
+        if job is None:
+            logger.info("worker idle")
+            return
+        logger.info("processed ingestion job", extra={"job_id": job.id, "status": job.status})
 
 
 def main() -> None:
     logger.info("starting worker", extra={"redis_url": settings.redis_url})
     while True:
-        run_once()
+        asyncio.run(run_once())
         time.sleep(settings.poll_interval_seconds)
 
 

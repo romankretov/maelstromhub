@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Background worker for Maelstromhub."
 requires-python = ">=3.12"
 dependencies = [
+  "maelstromhub-api",
   "maelstromhub-core",
   "pydantic-settings>=2.4,<3.0",
   "redis>=5.0,<6.0"
@@ -16,6 +17,7 @@ dev = [
 ]
 
 [tool.uv.sources]
+maelstromhub-api = { path = "../api", editable = true }
 maelstromhub-core = { path = "../../packages/core", editable = true }
 
 [build-system]
