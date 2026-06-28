@@ -92,6 +92,14 @@ The first supported workflow is:
 Ideas Lab: create idea -> Strategy Builder: create Draft strategy
 ```
 
+Research datasets use system-defined exchange timeframes. The API seeds these automatically on startup and the seed script also repairs them if needed:
+
+```text
+1m, 5m, 15m, 1h, 4h, 1d
+```
+
+End users should create assets and datasets; they should not create regular exchange timeframes manually. The `/timeframes` API remains available as an internal/admin surface for inspecting supported intervals.
+
 Local database reset:
 
 ```bash

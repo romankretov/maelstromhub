@@ -12,9 +12,9 @@ from app.db.base import Base
 from app.db.research_repositories import (
     create_asset,
     create_dataset,
-    create_timeframe,
     enqueue_dataset_candle_backfill,
     enqueue_dataset_feature_compute,
+    ensure_system_timeframes,
     get_feature_summary,
     get_dataset,
     list_feature_snapshots,
@@ -45,7 +45,6 @@ from maelstromhub_core import (
     TrendRegime,
     StrategyCreate,
     StrategyVersionCreate,
-    TimeframeCreate,
 )
 
 
@@ -284,12 +283,9 @@ async def create_research_chain(client: httpx.AsyncClient) -> tuple[dict[str, An
         "/assets",
         json={"symbol": "BTC", "venue": "hyperliquid", "description": "Bitcoin perpetual"},
     )
-    timeframe_response = await client.post(
-        "/timeframes",
-        json={"name": "One hour", "interval": "1h"},
-    )
+    timeframe_response = await client.get("/timeframes")
     asset = asset_response.json()
-    timeframe = timeframe_response.json()
+    timeframe = next(item for item in timeframe_response.json()["timeframes"] if item["interval"] == "1h")
     dataset_response = await client.post(
         "/datasets",
         json={
@@ -301,7 +297,7 @@ async def create_research_chain(client: httpx.AsyncClient) -> tuple[dict[str, An
     )
 
     assert asset_response.status_code == 201
-    assert timeframe_response.status_code == 201
+    assert timeframe_response.status_code == 200
     assert dataset_response.status_code == 201
     return asset, timeframe, dataset_response.json()
 
@@ -310,12 +306,49 @@ async def _create_research_chain_in_session(
     session: AsyncSessionAdapter,
 ) -> tuple[Any, Any, Any]:
     asset = await create_asset(session, AssetCreate(symbol="BTC", venue="hyperliquid"))
-    timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+    timeframe = await _get_one_hour_timeframe(session)
     dataset = await create_dataset(
         session,
         DatasetCreate(asset_id=asset.id, timeframe_id=timeframe.id, name="BTC 1h research dataset"),
     )
     return asset, timeframe, dataset
+
+
+async def _get_one_hour_timeframe(session: AsyncSessionAdapter) -> Any:
+    timeframes = await ensure_system_timeframes(session)
+    return next(item for item in timeframes if item.interval == "1h")
+
+
+@pytest.mark.anyio
+async def test_system_timeframes_exist_on_fresh_database(client: httpx.AsyncClient) -> None:
+    response = await client.get("/timeframes")
+    timeframes = response.json()["timeframes"]
+
+    assert response.status_code == 200
+    assert [timeframe["interval"] for timeframe in timeframes] == ["1m", "5m", "15m", "1h", "4h", "1d"]
+    assert all(UUID(timeframe["id"]) for timeframe in timeframes)
+    assert all(timeframe["description"] == "System-supported exchange timeframe." for timeframe in timeframes)
+
+
+@pytest.mark.anyio
+async def test_dataset_creation_uses_default_timeframe(client: httpx.AsyncClient) -> None:
+    asset_response = await client.post("/assets", json={"symbol": "ETH", "venue": "hyperliquid"})
+    timeframes_response = await client.get("/timeframes")
+    one_hour = next(timeframe for timeframe in timeframes_response.json()["timeframes"] if timeframe["interval"] == "1h")
+
+    dataset_response = await client.post(
+        "/datasets",
+        json={
+            "asset_id": asset_response.json()["id"],
+            "timeframe_id": one_hour["id"],
+            "name": "ETH 1h research dataset",
+        },
+    )
+
+    assert asset_response.status_code == 201
+    assert timeframes_response.status_code == 200
+    assert dataset_response.status_code == 201
+    assert dataset_response.json()["timeframe_id"] == one_hour["id"]
 
 
 @pytest.mark.anyio
@@ -427,7 +460,7 @@ async def test_worker_execution_backfills_candles_idempotently_and_audits() -> N
             session,
             AssetCreate(symbol="BTC", venue="hyperliquid", description="Bitcoin perpetual"),
         )
-        timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+        timeframe = await _get_one_hour_timeframe(session)
         dataset = await create_dataset(
             session,
             DatasetCreate(
@@ -470,7 +503,7 @@ async def test_worker_execution_computes_features_idempotently() -> None:
     with session_factory() as sync_session:
         session = AsyncSessionAdapter(sync_session)
         asset = await create_asset(session, AssetCreate(symbol="BTC", venue="hyperliquid"))
-        timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+        timeframe = await _get_one_hour_timeframe(session)
         dataset = await create_dataset(
             session,
             DatasetCreate(asset_id=asset.id, timeframe_id=timeframe.id, name="BTC 1h research dataset"),
@@ -518,7 +551,7 @@ async def test_strategy_runner_generates_idempotent_sma_signals() -> None:
     with session_factory() as sync_session:
         session = AsyncSessionAdapter(sync_session)
         asset = await create_asset(session, AssetCreate(symbol="BTC", venue="hyperliquid"))
-        timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+        timeframe = await _get_one_hour_timeframe(session)
         dataset = await create_dataset(
             session,
             DatasetCreate(asset_id=asset.id, timeframe_id=timeframe.id, name="BTC 1h research dataset"),
@@ -670,7 +703,7 @@ async def test_backtest_run_replays_long_flat_signals_and_persists_results() -> 
     with session_factory() as sync_session:
         session = AsyncSessionAdapter(sync_session)
         asset = await create_asset(session, AssetCreate(symbol="BTC", venue="hyperliquid"))
-        timeframe = await create_timeframe(session, TimeframeCreate(name="One hour", interval="1h"))
+        timeframe = await _get_one_hour_timeframe(session)
         dataset = await create_dataset(
             session,
             DatasetCreate(asset_id=asset.id, timeframe_id=timeframe.id, name="BTC 1h research dataset"),

@@ -3,7 +3,7 @@ import { PageShell } from "@/components/shell/page-shell";
 
 export default function ResearchTimeframesPage() {
   return (
-    <PageShell title="Research Timeframes" description="Create and review canonical intervals for research datasets.">
+    <PageShell title="Internal Timeframes" description="Admin-only view of system-supported dataset intervals. Normal dataset creation uses these automatically.">
       <TimeframesClient />
     </PageShell>
   );

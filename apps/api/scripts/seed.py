@@ -3,6 +3,7 @@ import asyncio
 from sqlalchemy import select
 
 from app.db.models import IdeaORM, StrategyORM
+from app.db.research_repositories import ensure_system_timeframes
 from app.db.repositories import create_idea, create_strategy
 from app.db.session import async_session_factory
 from maelstromhub_core import IdeaCreate, StrategyCreate
@@ -10,6 +11,8 @@ from maelstromhub_core import IdeaCreate, StrategyCreate
 
 async def seed() -> None:
     async with async_session_factory() as session:
+        await ensure_system_timeframes(session)
+
         existing = await session.scalar(select(IdeaORM.id).limit(1))
         if existing:
             return

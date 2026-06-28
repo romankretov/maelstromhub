@@ -1,8 +1,8 @@
-from typing import Any, TypeVar
+from datetime import UTC, datetime
+from typing import Any, NamedTuple, TypeVar
 from uuid import UUID
 
 from fastapi import HTTPException
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +52,24 @@ from maelstromhub_core import (
 OrmModel = TypeVar("OrmModel")
 
 
+class SystemTimeframe(NamedTuple):
+    name: str
+    interval: str
+    description: str
+
+
+SYSTEM_TIMEFRAMES: tuple[SystemTimeframe, ...] = (
+    SystemTimeframe("1 minute", "1m", "System-supported exchange timeframe."),
+    SystemTimeframe("5 minutes", "5m", "System-supported exchange timeframe."),
+    SystemTimeframe("15 minutes", "15m", "System-supported exchange timeframe."),
+    SystemTimeframe("1 hour", "1h", "System-supported exchange timeframe."),
+    SystemTimeframe("4 hours", "4h", "System-supported exchange timeframe."),
+    SystemTimeframe("1 day", "1d", "System-supported exchange timeframe."),
+)
+SYSTEM_TIMEFRAME_INTERVALS = tuple(timeframe.interval for timeframe in SYSTEM_TIMEFRAMES)
+_SYSTEM_TIMEFRAME_ORDER = {interval: index for index, interval in enumerate(SYSTEM_TIMEFRAME_INTERVALS)}
+
+
 async def _get_or_404(session: AsyncSession, model: type[OrmModel], item_id: UUID) -> OrmModel:
     item = await session.get(model, item_id)
     if item is None:
@@ -98,8 +116,53 @@ async def delete_asset(session: AsyncSession, asset_id: UUID) -> None:
 
 
 async def list_timeframes(session: AsyncSession) -> list[Timeframe]:
-    result = await session.execute(select(TimeframeORM).order_by(TimeframeORM.created_at.desc()))
-    return [Timeframe.model_validate(timeframe) for timeframe in result.scalars()]
+    await ensure_system_timeframes(session)
+    return await _list_timeframes(session)
+
+
+async def _list_timeframes(session: AsyncSession) -> list[Timeframe]:
+    result = await session.execute(select(TimeframeORM))
+    timeframes = sorted(
+        result.scalars(),
+        key=lambda timeframe: (
+            _SYSTEM_TIMEFRAME_ORDER.get(timeframe.interval, len(_SYSTEM_TIMEFRAME_ORDER)),
+            timeframe.created_at,
+        ),
+    )
+    return [Timeframe.model_validate(timeframe) for timeframe in timeframes]
+
+
+async def ensure_system_timeframes(session: AsyncSession) -> list[Timeframe]:
+    result = await session.execute(
+        select(TimeframeORM).where(TimeframeORM.interval.in_(SYSTEM_TIMEFRAME_INTERVALS))
+    )
+    existing_by_interval = {timeframe.interval: timeframe for timeframe in result.scalars()}
+    changed = False
+
+    for definition in SYSTEM_TIMEFRAMES:
+        timeframe = existing_by_interval.get(definition.interval)
+        if timeframe is None:
+            session.add(
+                TimeframeORM(
+                    id=_new_id(),
+                    name=definition.name,
+                    interval=definition.interval,
+                    description=definition.description,
+                )
+            )
+            changed = True
+            continue
+
+        if timeframe.name != definition.name or timeframe.description != definition.description:
+            timeframe.name = definition.name
+            timeframe.description = definition.description
+            changed = True
+
+    if changed:
+        await session.flush()
+        await session.commit()
+
+    return await _list_timeframes(session)
 
 
 async def get_timeframe(session: AsyncSession, timeframe_id: UUID) -> Timeframe:
@@ -140,6 +203,7 @@ async def get_dataset(session: AsyncSession, dataset_id: UUID) -> Dataset:
 
 
 async def create_dataset(session: AsyncSession, payload: DatasetCreate) -> Dataset:
+    await ensure_system_timeframes(session)
     dataset = DatasetORM(id=_new_id(), **payload.model_dump())
     session.add(dataset)
     await session.flush()

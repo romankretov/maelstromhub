@@ -47,6 +47,15 @@ function descriptionValue(value: string | null) {
   return value?.trim() ? value : "No description";
 }
 
+const SYSTEM_TIMEFRAME_UNAVAILABLE_MESSAGE =
+  "System timeframes are unavailable. Dataset creation is disabled until the API seeds supported timeframes.";
+
+export function getSystemTimeframeError(timeframes: Timeframe[], failedToLoad: boolean) {
+  if (failedToLoad) return SYSTEM_TIMEFRAME_UNAVAILABLE_MESSAGE;
+  if (timeframes.length === 0) return SYSTEM_TIMEFRAME_UNAVAILABLE_MESSAGE;
+  return null;
+}
+
 export function ResearchOverviewClient() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -82,7 +91,7 @@ export function ResearchOverviewClient() {
 
   const nextAction = useMemo(() => {
     if (assets.length === 0) return { href: "/research/assets", label: "Create an asset", detail: "Start with a symbol and venue." };
-    if (datasets.length === 0) return { href: "/research/datasets", label: "Create a dataset", detail: "Link an asset to a timeframe." };
+    if (datasets.length === 0) return { href: "/research/datasets", label: "Create a dataset", detail: "Choose an asset and supported system timeframe." };
     if (features.length === 0) return { href: "/research/features", label: "Create a feature snapshot", detail: "Attach research values to a dataset." };
     if (experiments.length === 0) return { href: "/research/experiments", label: "Create an experiment", detail: "Record the first research attempt." };
     return { href: "/research/experiments", label: "Review experiments", detail: "Continue refining research attempts." };
@@ -361,15 +370,15 @@ export function TimeframesClient() {
     <ResearchFormLayout
       form={
         <form onSubmit={handleSubmit} className="rounded-lg border bg-card p-5">
-          <FormTitle title="Create timeframe" description="Define a canonical interval for dataset metadata." />
+          <FormTitle title="Create internal timeframe" description="Admin-only override for supported exchange intervals." />
           <TextInput label="Name" value={name} onChange={setName} placeholder="One hour" required />
           <TextInput label="Interval" value={interval} onChange={setInterval} placeholder="1h" required />
           <TextArea label="Description" value={description} onChange={setDescription} placeholder="Optional notes" />
-          <SubmitButton saving={saving} label="Create timeframe" />
+          <SubmitButton saving={saving} label="Create internal timeframe" />
         </form>
       }
       content={
-        <ListSection loading={loading} error={error} emptyIcon={Timer} emptyTitle="No timeframes yet" emptyDescription="Create a timeframe before building datasets.">
+        <ListSection loading={loading} error={error} emptyIcon={Timer} emptyTitle="No timeframes available" emptyDescription="System timeframes are normally seeded automatically by the API.">
           {timeframes.map((timeframe) => (
             <RecordCard key={timeframe.id} title={timeframe.name} badge={timeframe.interval} description={descriptionValue(timeframe.description)} createdAt={timeframe.created_at} />
           ))}
@@ -390,13 +399,21 @@ export function DatasetsClient() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timeframesFailedToLoad, setTimeframesFailedToLoad] = useState(false);
 
   useEffect(() => {
     async function loadDatasets() {
       setLoading(true);
       setError(null);
+      setTimeframesFailedToLoad(false);
       try {
-        const [loadedAssets, loadedTimeframes, loadedDatasets] = await Promise.all([getAssets(), getTimeframes(), getDatasets()]);
+        const [loadedAssets, loadedDatasets] = await Promise.all([getAssets(), getDatasets()]);
+        let loadedTimeframes: Timeframe[] = [];
+        try {
+          loadedTimeframes = await getTimeframes();
+        } catch {
+          setTimeframesFailedToLoad(true);
+        }
         setAssets(loadedAssets);
         setTimeframes(loadedTimeframes);
         setDatasets(loadedDatasets);
@@ -412,8 +429,14 @@ export function DatasetsClient() {
     void loadDatasets();
   }, []);
 
+  const timeframeSystemError = loading || error ? null : getSystemTimeframeError(timeframes, timeframesFailedToLoad);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (timeframeSystemError) {
+      setError(timeframeSystemError);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -432,16 +455,22 @@ export function DatasetsClient() {
     <ResearchFormLayout
       form={
         <form onSubmit={handleSubmit} className="rounded-lg border bg-card p-5">
-          <FormTitle title="Create dataset" description="Link an asset and timeframe. This stores metadata only." />
+          <FormTitle title="Create dataset" description="Link an asset to a supported system timeframe. This stores metadata only." />
           <SelectInput label="Asset" value={assetId} onChange={setAssetId} options={assets.map((asset) => ({ value: asset.id, label: `${asset.symbol} / ${asset.venue}` }))} required />
-          <SelectInput label="Timeframe" value={timeframeId} onChange={setTimeframeId} options={timeframes.map((timeframe) => ({ value: timeframe.id, label: `${timeframe.name} (${timeframe.interval})` }))} required />
+          {timeframeSystemError ? (
+            <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              {timeframeSystemError}
+            </div>
+          ) : (
+            <SelectInput label="System timeframe" value={timeframeId} onChange={setTimeframeId} options={timeframes.map((timeframe) => ({ value: timeframe.id, label: `${timeframe.name} (${timeframe.interval})` }))} required />
+          )}
           <TextInput label="Name" value={name} onChange={setName} placeholder="BTC 1h research dataset" required />
           <TextArea label="Description" value={description} onChange={setDescription} placeholder="Dataset scope and assumptions" />
-          <SubmitButton saving={saving} label="Create dataset" disabled={!assetId || !timeframeId} />
+          <SubmitButton saving={saving} label="Create dataset" disabled={!assetId || !timeframeId || Boolean(timeframeSystemError)} />
         </form>
       }
       content={
-        <ListSection loading={loading} error={error} emptyIcon={Layers} emptyTitle="No datasets yet" emptyDescription="Create assets and timeframes first, then define a dataset.">
+        <ListSection loading={loading} error={error} emptyIcon={Layers} emptyTitle="No datasets yet" emptyDescription="Create an asset, then define a dataset with a supported system timeframe.">
           {datasets.map((dataset) => (
             <RecordCard key={dataset.id} title={dataset.name} badge="Dataset" description={descriptionValue(dataset.description)} createdAt={dataset.created_at} meta={datasetMeta(dataset, assets, timeframes)} href={`/research/datasets/${dataset.id}`} />
           ))}

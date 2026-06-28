@@ -1,15 +1,29 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.db.research_repositories import ensure_system_timeframes
+from app.db.session import async_session_factory
 from app.routes.research import router as research_router
 from app.routes.workflow import router as workflow_router
 from maelstromhub_core import AssetSymbol
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async with async_session_factory() as session:
+        await ensure_system_timeframes(session)
+    yield
+
 
 app = FastAPI(
     title="Maelstromhub API",
     version="0.1.0",
     description="Research and operations API for Maelstromhub.",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
