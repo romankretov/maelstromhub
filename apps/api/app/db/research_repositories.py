@@ -6,8 +6,18 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AssetORM, CandleORM, DatasetORM, ExperimentORM, FeatureORM, IngestionJobORM, TimeframeORM
+from app.db.models import (
+    AssetORM,
+    CandleORM,
+    DatasetORM,
+    ExperimentORM,
+    FeatureORM,
+    FeatureSnapshotORM,
+    IngestionJobORM,
+    TimeframeORM,
+)
 from app.db.repositories import _new_id, create_audit_event
+from app.features.calculators import CandleInput, calculate_features
 from app.providers.candles import CandleProvider, ProviderCandle, default_backfill_window
 from maelstromhub_core import (
     Asset,
@@ -25,9 +35,14 @@ from maelstromhub_core import (
     ExperimentUpdate,
     Feature,
     FeatureCreate,
+    FeatureComputeRequest,
+    FeatureSnapshot,
+    FeatureSummary,
+    FeatureSummaryItem,
     FeatureUpdate,
     IngestionJob,
     IngestionJobStatus,
+    IngestionJobType,
     Timeframe,
     TimeframeCreate,
     TimeframeUpdate,
@@ -213,6 +228,7 @@ async def enqueue_dataset_candle_backfill(
     job = IngestionJobORM(
         id=_new_id("ingestion-job"),
         dataset_id=dataset_id,
+        job_type=IngestionJobType.CANDLE_BACKFILL.value,
         status=IngestionJobStatus.QUEUED.value,
         requested_start=requested_start,
         requested_end=requested_end,
@@ -262,6 +278,17 @@ async def run_next_queued_ingestion_job(
 
 
 async def run_ingestion_job(
+    session: AsyncSession,
+    job_id: str,
+    provider: CandleProvider,
+) -> IngestionJob:
+    job = await _get_or_404(session, IngestionJobORM, job_id)
+    if job.job_type == IngestionJobType.FEATURE_COMPUTE.value:
+        return await run_feature_ingestion_job(session, job_id)
+    return await run_candle_ingestion_job(session, job_id, provider)
+
+
+async def run_candle_ingestion_job(
     session: AsyncSession,
     job_id: str,
     provider: CandleProvider,
@@ -319,6 +346,113 @@ async def run_ingestion_job(
     return IngestionJob.model_validate(job)
 
 
+async def enqueue_dataset_feature_compute(
+    session: AsyncSession,
+    dataset_id: str,
+    payload: FeatureComputeRequest,
+) -> IngestionJob:
+    await _get_or_404(session, DatasetORM, dataset_id)
+    job = IngestionJobORM(
+        id=_new_id("ingestion-job"),
+        dataset_id=dataset_id,
+        job_type=IngestionJobType.FEATURE_COMPUTE.value,
+        status=IngestionJobStatus.QUEUED.value,
+    )
+    session.add(job)
+    await session.flush()
+    await create_audit_event(
+        session,
+        actor="system",
+        action="queued_feature_job",
+        subject=job.id,
+        flush=False,
+    )
+    await session.commit()
+    await session.refresh(job)
+    return IngestionJob.model_validate(job)
+
+
+async def run_feature_ingestion_job(session: AsyncSession, job_id: str) -> IngestionJob:
+    job = await _get_or_404(session, IngestionJobORM, job_id)
+    dataset = await _get_or_404(session, DatasetORM, job.dataset_id)
+
+    job.status = IngestionJobStatus.RUNNING.value
+    job.started_at = datetime.now(UTC)
+    job.error_message = None
+    await session.commit()
+
+    try:
+        candles = await _load_feature_candles(session, dataset.id)
+        feature_values = calculate_features(candles)
+        inserted, updated = await _upsert_feature_snapshots(session, dataset.id, feature_values)
+        job.status = IngestionJobStatus.SUCCEEDED.value
+        job.finished_at = datetime.now(UTC)
+        job.feature_snapshots_written = inserted + updated
+        job.error_message = None
+        await create_audit_event(
+            session,
+            actor="system",
+            action="succeeded_feature_job",
+            subject=job.id,
+            flush=False,
+        )
+        await session.commit()
+    except Exception as error:
+        job.status = IngestionJobStatus.FAILED.value
+        job.finished_at = datetime.now(UTC)
+        job.error_message = str(error)
+        await create_audit_event(
+            session,
+            actor="system",
+            action="failed_feature_job",
+            subject=job.id,
+            flush=False,
+        )
+        await session.commit()
+
+    await session.refresh(job)
+    return IngestionJob.model_validate(job)
+
+
+async def list_feature_snapshots(session: AsyncSession, dataset_id: str) -> list[FeatureSnapshot]:
+    await _get_or_404(session, DatasetORM, dataset_id)
+    result = await session.execute(
+        select(FeatureSnapshotORM)
+        .where(FeatureSnapshotORM.dataset_id == dataset_id)
+        .order_by(FeatureSnapshotORM.timestamp.asc(), FeatureSnapshotORM.feature_name.asc())
+    )
+    return [_feature_snapshot_to_schema(snapshot) for snapshot in result.scalars()]
+
+
+async def get_feature_summary(session: AsyncSession, dataset_id: str) -> FeatureSummary:
+    snapshots = await list_feature_snapshots(session, dataset_id)
+    grouped: dict[str, list[FeatureSnapshot]] = {}
+    latest_timestamp = None
+    for snapshot in snapshots:
+        grouped.setdefault(snapshot.feature_name, []).append(snapshot)
+        if latest_timestamp is None or snapshot.timestamp > latest_timestamp:
+            latest_timestamp = snapshot.timestamp
+
+    items: list[FeatureSummaryItem] = []
+    for feature_name, feature_snapshots in sorted(grouped.items()):
+        latest = max(feature_snapshots, key=lambda snapshot: snapshot.timestamp)
+        items.append(
+            FeatureSummaryItem(
+                feature_name=feature_name,
+                snapshot_count=len(feature_snapshots),
+                latest_timestamp=latest.timestamp,
+                latest_value=latest.numeric_value,
+            )
+        )
+
+    return FeatureSummary(
+        dataset_id=dataset_id,
+        total_snapshots=len(snapshots),
+        latest_timestamp=latest_timestamp,
+        features=items,
+    )
+
+
 def _resolve_backfill_window(payload: CandleBackfillRequest):
     if payload.start_time and payload.end_time:
         return payload.start_time, payload.end_time
@@ -372,6 +506,71 @@ async def _refresh_dataset_candle_stats(session: AsyncSession, dataset: DatasetO
     latest_result = await session.execute(select(func.max(CandleORM.opened_at)).where(CandleORM.dataset_id == dataset.id))
     dataset.candle_count = int(count_result.scalar_one() or 0)
     dataset.latest_candle_timestamp = latest_result.scalar_one_or_none()
+
+
+async def _load_feature_candles(session: AsyncSession, dataset_id: str) -> list[CandleInput]:
+    result = await session.execute(
+        select(CandleORM)
+        .where(CandleORM.dataset_id == dataset_id)
+        .order_by(CandleORM.opened_at.asc())
+    )
+    return [
+        CandleInput(
+            timestamp=candle.opened_at,
+            open=float(candle.open),
+            high=float(candle.high),
+            low=float(candle.low),
+            close=float(candle.close),
+        )
+        for candle in result.scalars()
+    ]
+
+
+async def _upsert_feature_snapshots(session: AsyncSession, dataset_id: str, feature_values) -> tuple[int, int]:
+    inserted = 0
+    updated = 0
+    for value in feature_values:
+        timestamp = value.timestamp.astimezone(UTC)
+        existing_result = await session.execute(
+            select(FeatureSnapshotORM).where(
+                FeatureSnapshotORM.dataset_id == dataset_id,
+                FeatureSnapshotORM.timestamp == timestamp,
+                FeatureSnapshotORM.feature_name == value.feature_name,
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        values = {
+            "numeric_value": value.numeric_value,
+            "metadata_json": value.metadata,
+        }
+        if existing is None:
+            session.add(
+                FeatureSnapshotORM(
+                    id=_new_id("feature-snapshot"),
+                    dataset_id=dataset_id,
+                    timestamp=timestamp,
+                    feature_name=value.feature_name,
+                    **values,
+                )
+            )
+            inserted += 1
+        else:
+            _apply_updates(existing, values)
+            updated += 1
+    await session.flush()
+    return inserted, updated
+
+
+def _feature_snapshot_to_schema(snapshot: FeatureSnapshotORM) -> FeatureSnapshot:
+    return FeatureSnapshot(
+        id=snapshot.id,
+        dataset_id=snapshot.dataset_id,
+        timestamp=snapshot.timestamp,
+        feature_name=snapshot.feature_name,
+        numeric_value=float(snapshot.numeric_value),
+        metadata=snapshot.metadata_json,
+        created_at=snapshot.created_at,
+    )
 
 
 async def list_features(session: AsyncSession) -> list[Feature]:

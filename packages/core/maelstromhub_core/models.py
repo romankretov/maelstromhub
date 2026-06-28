@@ -104,6 +104,34 @@ class CandleBackfillResult(DomainModel):
     status: str
 
 
+class FeatureComputeRequest(DomainModel):
+    feature_names: list[str] | None = None
+
+
+class FeatureSnapshot(DomainModel):
+    id: str
+    dataset_id: str
+    timestamp: datetime
+    feature_name: str
+    numeric_value: float
+    metadata: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class FeatureSummaryItem(DomainModel):
+    feature_name: str
+    snapshot_count: int
+    latest_timestamp: datetime | None = None
+    latest_value: float | None = None
+
+
+class FeatureSummary(DomainModel):
+    dataset_id: str
+    total_snapshots: int
+    latest_timestamp: datetime | None = None
+    features: list[FeatureSummaryItem] = Field(default_factory=list)
+
+
 class IngestionJobStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -111,15 +139,22 @@ class IngestionJobStatus(StrEnum):
     FAILED = "failed"
 
 
+class IngestionJobType(StrEnum):
+    CANDLE_BACKFILL = "candle_backfill"
+    FEATURE_COMPUTE = "feature_compute"
+
+
 class IngestionJob(DomainModel):
     id: str
     dataset_id: str
+    job_type: IngestionJobType = IngestionJobType.CANDLE_BACKFILL
     status: IngestionJobStatus
     requested_start: datetime | None = None
     requested_end: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     candles_written: int = 0
+    feature_snapshots_written: int = 0
     error_message: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

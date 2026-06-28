@@ -145,14 +145,40 @@ export type IngestionJobStatus = "queued" | "running" | "succeeded" | "failed";
 export type IngestionJob = {
   id: string;
   dataset_id: string;
+  job_type: "candle_backfill" | "feature_compute";
   status: IngestionJobStatus;
   requested_start: string | null;
   requested_end: string | null;
   started_at: string | null;
   finished_at: string | null;
   candles_written: number;
+  feature_snapshots_written: number;
   error_message: string | null;
   created_at: string;
+};
+
+export type FeatureSnapshot = {
+  id: string;
+  dataset_id: string;
+  timestamp: string;
+  feature_name: string;
+  numeric_value: number;
+  metadata: Record<string, string | number | boolean | null>;
+  created_at: string;
+};
+
+export type FeatureSummaryItem = {
+  feature_name: string;
+  snapshot_count: number;
+  latest_timestamp: string | null;
+  latest_value: number | null;
+};
+
+export type FeatureSummary = {
+  dataset_id: string;
+  total_snapshots: number;
+  latest_timestamp: string | null;
+  features: FeatureSummaryItem[];
 };
 
 export type FeatureCreate = {
@@ -272,6 +298,22 @@ export async function backfillDatasetCandles(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function computeDatasetFeatures(datasetId: string): Promise<IngestionJob> {
+  return request<IngestionJob>(`/datasets/${datasetId}/compute-features`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function getDatasetFeatureSnapshots(datasetId: string): Promise<FeatureSnapshot[]> {
+  const body = await request<{ feature_snapshots: FeatureSnapshot[] }>(`/datasets/${datasetId}/feature-snapshots`);
+  return body.feature_snapshots;
+}
+
+export async function getDatasetFeatureSummary(datasetId: string): Promise<FeatureSummary> {
+  return request<FeatureSummary>(`/datasets/${datasetId}/feature-summary`);
 }
 
 export async function getIngestionJob(jobId: string): Promise<IngestionJob> {

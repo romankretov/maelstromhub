@@ -111,6 +111,7 @@ class DatasetORM(Base):
     experiments: Mapped[list["ExperimentORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     candles: Mapped[list["CandleORM"]] = relationship(back_populates="dataset", passive_deletes=True)
     ingestion_jobs: Mapped[list["IngestionJobORM"]] = relationship(back_populates="dataset", passive_deletes=True)
+    feature_snapshots: Mapped[list["FeatureSnapshotORM"]] = relationship(back_populates="dataset", passive_deletes=True)
 
 
 class CandleORM(Base):
@@ -140,12 +141,14 @@ class IngestionJobORM(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    job_type: Mapped[str] = mapped_column(String(40), default="candle_backfill", nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     requested_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     requested_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     candles_written: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    feature_snapshots_written: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -154,6 +157,25 @@ class IngestionJobORM(Base):
     )
 
     dataset: Mapped[DatasetORM] = relationship(back_populates="ingestion_jobs")
+
+
+class FeatureSnapshotORM(Base):
+    __tablename__ = "feature_snapshots"
+    __table_args__ = (UniqueConstraint("dataset_id", "timestamp", "feature_name", name="uq_feature_snapshots_dataset_timestamp_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    feature_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    numeric_value: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    dataset: Mapped[DatasetORM] = relationship(back_populates="feature_snapshots")
 
 
 class FeatureORM(Base):

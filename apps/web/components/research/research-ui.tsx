@@ -15,9 +15,11 @@ import {
   createFeature,
   createTimeframe,
   backfillDatasetCandles,
+  computeDatasetFeatures,
   getAssets,
   getDataset,
   getDatasetCandles,
+  getDatasetFeatureSummary,
   getDatasetIngestionJobs,
   getDatasets,
   getExperiments,
@@ -28,6 +30,7 @@ import {
   type Dataset,
   type Experiment,
   type Feature,
+  type FeatureSummary,
   type IngestionJob,
   type Timeframe,
 } from "@/lib/api-client";
@@ -479,8 +482,10 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
+  const [featureSummary, setFeatureSummary] = useState<FeatureSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
+  const [computingFeatures, setComputingFeatures] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -489,14 +494,16 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const [loadedDataset, loadedCandles, loadedJobs] = await Promise.all([
+      const [loadedDataset, loadedCandles, loadedJobs, loadedFeatureSummary] = await Promise.all([
         getDataset(datasetId),
         getDatasetCandles(datasetId),
         getDatasetIngestionJobs(datasetId),
+        getDatasetFeatureSummary(datasetId),
       ]);
       setDataset(loadedDataset);
       setCandles(loadedCandles);
       setJobs(loadedJobs);
+      setFeatureSummary(loadedFeatureSummary);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load dataset.");
     } finally {
@@ -530,6 +537,22 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
     }
   }
 
+  async function handleComputeFeatures() {
+    setComputingFeatures(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const job = await computeDatasetFeatures(datasetId);
+      const loadedJobs = await getDatasetIngestionJobs(datasetId);
+      setJobs(loadedJobs);
+      setNotice(`Feature compute job queued: ${job.id}.`);
+    } catch (computeError) {
+      setError(computeError instanceof Error ? computeError.message : "Unable to queue feature computation.");
+    } finally {
+      setComputingFeatures(false);
+    }
+  }
+
   async function handleRefresh() {
     setRefreshing(true);
     try {
@@ -558,9 +581,9 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
 
       <section className="grid gap-4 md:grid-cols-4">
         <MetricCard label="Candles" value={dataset.candle_count.toString()} />
+        <MetricCard label="Features" value={(featureSummary?.total_snapshots ?? 0).toString()} />
+        <MetricCard label="Latest feature" value={featureSummary?.latest_timestamp ? formatDate(featureSummary.latest_timestamp) : "none"} />
         <MetricCard label="Ingestion" value={dataset.last_ingestion_status ?? "not started"} />
-        <MetricCard label="Latest candle" value={dataset.latest_candle_timestamp ? formatDate(dataset.latest_candle_timestamp) : "none"} />
-        <MetricCard label="Errors" value={dataset.last_ingestion_error ? "present" : "none"} />
       </section>
 
       <section className="rounded-lg border bg-card p-5">
@@ -580,6 +603,9 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
             <Button onClick={handleBackfill} disabled={backfilling}>
               {backfilling ? "Queueing" : "Backfill data"}
             </Button>
+            <Button onClick={handleComputeFeatures} disabled={computingFeatures || candles.length === 0}>
+              {computingFeatures ? "Queueing" : "Compute features"}
+            </Button>
           </div>
         </div>
       </section>
@@ -597,10 +623,12 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
               <div key={job.id} className="py-3 text-sm">
                 <div className="flex items-center justify-between gap-4">
                   <p className="font-medium">{job.id}</p>
-                  <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">{job.status}</span>
+                  <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">
+                    {job.job_type} / {job.status}
+                  </span>
                 </div>
                 <p className="mt-1 text-muted-foreground">
-                  {job.candles_written} candles written
+                  {job.candles_written} candles, {job.feature_snapshots_written} feature snapshots
                   {job.finished_at ? `, finished ${formatDate(job.finished_at)}` : ""}
                 </p>
                 {job.error_message ? <p className="mt-1 text-red-700">{job.error_message}</p> : null}
@@ -629,6 +657,43 @@ export function DatasetDetailClient({ datasetId }: { datasetId: string }) {
           </div>
         </section>
       )}
+
+      <section className="rounded-lg border bg-card p-5">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-base font-semibold">Feature summary</h2>
+          <p className="text-sm text-muted-foreground">{featureSummary?.total_snapshots ?? 0} snapshots</p>
+        </div>
+        {!featureSummary || featureSummary.features.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No generated feature snapshots yet. Backfill candles first, then compute features.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b text-xs text-muted-foreground">
+                <tr>
+                  <th className="py-2 pr-4 font-medium">Feature</th>
+                  <th className="py-2 pr-4 font-medium">Snapshots</th>
+                  <th className="py-2 pr-4 font-medium">Latest value</th>
+                  <th className="py-2 font-medium">Latest timestamp</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {featureSummary.features.map((feature) => (
+                  <tr key={feature.feature_name}>
+                    <td className="py-3 pr-4 font-medium">{feature.feature_name}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">{feature.snapshot_count}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">
+                      {feature.latest_value === null ? "n/a" : feature.latest_value.toFixed(6)}
+                    </td>
+                    <td className="py-3 text-muted-foreground">
+                      {feature.latest_timestamp ? formatDate(feature.latest_timestamp) : "n/a"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

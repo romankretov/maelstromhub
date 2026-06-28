@@ -14,6 +14,7 @@ from app.db.research_repositories import (
     delete_experiment,
     delete_feature,
     delete_timeframe,
+    enqueue_dataset_feature_compute,
     get_asset,
     get_dataset,
     get_experiment,
@@ -23,6 +24,8 @@ from app.db.research_repositories import (
     enqueue_dataset_candle_backfill,
     list_dataset_candles,
     list_dataset_ingestion_jobs,
+    list_feature_snapshots,
+    get_feature_summary,
     list_assets,
     list_datasets,
     list_experiments,
@@ -49,6 +52,9 @@ from maelstromhub_core import (
     ExperimentUpdate,
     Feature,
     FeatureCreate,
+    FeatureComputeRequest,
+    FeatureSnapshot,
+    FeatureSummary,
     FeatureUpdate,
     IngestionJob,
     Timeframe,
@@ -135,6 +141,25 @@ async def post_dataset_candle_backfill(
 @router.get("/datasets/{dataset_id}/candles")
 async def get_dataset_candles(dataset_id: str, session: SessionDependency) -> dict[str, list[Candle]]:
     return {"candles": await list_dataset_candles(session, dataset_id)}
+
+
+@router.post("/datasets/{dataset_id}/compute-features")
+async def post_dataset_feature_compute(
+    dataset_id: str,
+    payload: FeatureComputeRequest,
+    session: SessionDependency,
+) -> IngestionJob:
+    return await enqueue_dataset_feature_compute(session, dataset_id, payload)
+
+
+@router.get("/datasets/{dataset_id}/feature-snapshots")
+async def get_dataset_feature_snapshots(dataset_id: str, session: SessionDependency) -> dict[str, list[FeatureSnapshot]]:
+    return {"feature_snapshots": await list_feature_snapshots(session, dataset_id)}
+
+
+@router.get("/datasets/{dataset_id}/feature-summary")
+async def get_dataset_feature_summary(dataset_id: str, session: SessionDependency) -> FeatureSummary:
+    return await get_feature_summary(session, dataset_id)
 
 
 @router.get("/datasets/{dataset_id}/ingestion-jobs")
