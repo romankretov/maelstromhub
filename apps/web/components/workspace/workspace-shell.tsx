@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -10,6 +10,7 @@ import {
   Clock3,
   LineChart,
   ListFilter,
+  Loader2,
   NotebookText,
   Play,
   RefreshCw,
@@ -23,77 +24,94 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  getWorkspaceState,
+  loadWorkspaceMarket,
+  type Candle,
+  type WorkspaceRange,
+  type WorkspaceState,
+} from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 const markets = ["BTC", "ETH", "SOL", "HYPE", "Manual"] as const;
 const timeframes = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
-const ranges = ["7d", "30d", "90d", "180d", "1y"] as const;
+const ranges = ["7d", "30d", "90d", "180d", "1y"] as const satisfies readonly WorkspaceRange[];
 const tabs = ["Strategy", "Backtests", "Optimisation", "Notes", "Logs"] as const;
-
-const watchlist = [
-  { symbol: "BTC", price: "104,280.5", change: "+2.14%", state: "Bull Trend" },
-  { symbol: "ETH", price: "3,742.8", change: "+1.02%", state: "Normal Vol" },
-  { symbol: "SOL", price: "181.2", change: "-0.44%", state: "Range" },
-  { symbol: "HYPE", price: "42.6", change: "+4.85%", state: "High Vol" },
-];
-
-const metrics = [
-  { label: "Return 30d", value: "+11.8%", tone: "text-emerald-300" },
-  { label: "Volatility", value: "Normal", tone: "text-sky-300" },
-  { label: "Drawdown", value: "-6.2%", tone: "text-amber-300" },
-  { label: "Data", value: "Placeholder", tone: "text-zinc-300" },
-];
-
-const candles = [
-  { x: 18, open: 95, high: 83, low: 132, close: 106, up: true },
-  { x: 40, open: 108, high: 88, low: 139, close: 121, up: true },
-  { x: 62, open: 120, high: 94, low: 145, close: 116, up: false },
-  { x: 84, open: 114, high: 78, low: 130, close: 91, up: false },
-  { x: 106, open: 93, high: 70, low: 122, close: 82, up: false },
-  { x: 128, open: 84, high: 63, low: 118, close: 101, up: true },
-  { x: 150, open: 103, high: 59, low: 116, close: 74, up: false },
-  { x: 172, open: 76, high: 48, low: 105, close: 61, up: false },
-  { x: 194, open: 63, high: 40, low: 92, close: 54, up: false },
-  { x: 216, open: 56, high: 38, low: 91, close: 78, up: true },
-  { x: 238, open: 80, high: 45, low: 104, close: 68, up: false },
-  { x: 260, open: 70, high: 42, low: 98, close: 52, up: false },
-  { x: 282, open: 54, high: 33, low: 88, close: 46, up: false },
-  { x: 304, open: 48, high: 31, low: 84, close: 67, up: true },
-  { x: 326, open: 69, high: 36, low: 91, close: 58, up: false },
-  { x: 348, open: 60, high: 29, low: 82, close: 41, up: false },
-  { x: 370, open: 43, high: 23, low: 71, close: 35, up: false },
-  { x: 392, open: 37, high: 18, low: 66, close: 31, up: false },
-  { x: 414, open: 33, high: 16, low: 63, close: 51, up: true },
-  { x: 436, open: 53, high: 21, low: 69, close: 39, up: false },
-  { x: 458, open: 41, high: 19, low: 74, close: 62, up: true },
-  { x: 480, open: 64, high: 27, low: 80, close: 36, up: false },
-  { x: 502, open: 38, high: 18, low: 70, close: 57, up: true },
-  { x: 524, open: 59, high: 24, low: 75, close: 32, up: false },
-  { x: 546, open: 34, high: 13, low: 61, close: 23, up: false },
-  { x: 568, open: 25, high: 10, low: 55, close: 44, up: true },
-];
 
 type Market = (typeof markets)[number];
 type Timeframe = (typeof timeframes)[number];
 type Range = (typeof ranges)[number];
 type Tab = (typeof tabs)[number];
+type WorkspaceStatus = "idle" | "loading" | "queued" | "running" | "ready" | "error";
 
 export function WorkspaceShell() {
   const [market, setMarket] = useState<Market>("BTC");
   const [manualMarket, setManualMarket] = useState("");
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
-  const [range, setRange] = useState<Range>("30d");
+  const [range, setRange] = useState<Range>("90d");
   const [activeTab, setActiveTab] = useState<Tab>("Strategy");
-  const [refreshCount, setRefreshCount] = useState(0);
+  const [state, setState] = useState<WorkspaceState | null>(null);
+  const [status, setStatus] = useState<WorkspaceStatus>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
 
   const displayMarket = useMemo(() => {
     if (market !== "Manual") return market;
-    return manualMarket.trim().toUpperCase() || "CUSTOM";
+    return manualMarket.trim().toUpperCase();
   }, [manualMarket, market]);
 
-  function handleRefresh(event: FormEvent<HTMLFormElement>) {
+  const selectedSymbol = displayMarket || "CUSTOM";
+  const stats = useMemo(() => computeChartStats(state?.latest_candles ?? []), [state?.latest_candles]);
+  const stateStage = getStateStage(state, status, error);
+
+  const refreshState = useCallback(async () => {
+    if (!displayMarket) return;
+    try {
+      const nextState = await getWorkspaceState({ symbol: displayMarket, timeframe, range });
+      setState(nextState);
+      setError(null);
+      setStatus(statusFromState(nextState));
+    } catch (loadError) {
+      setStatus("error");
+      setError(errorMessage(loadError, "Unable to load workspace state."));
+    }
+  }, [displayMarket, timeframe, range]);
+
+  useEffect(() => {
+    if (!state || status === "idle" || status === "error") return;
+    const shouldPoll =
+      state.data_health.status === "queued" ||
+      state.data_health.status === "running" ||
+      state.candle_summary.total_candles === 0 ||
+      state.feature_summary === null ||
+      state.feature_summary.total_snapshots === 0 ||
+      state.current_regime === null;
+    if (!shouldPoll) return;
+
+    const timer = window.setInterval(() => {
+      void refreshState();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshState, state, status]);
+
+  async function handleRefresh(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setRefreshCount((current) => current + 1);
+    if (!displayMarket) {
+      setStatus("error");
+      setError("Enter a market symbol before refreshing data.");
+      return;
+    }
+    setStatus("loading");
+    setError(null);
+    try {
+      const nextState = await loadWorkspaceMarket({ symbol: displayMarket, timeframe, range });
+      setState(nextState);
+      setStatus(statusFromState(nextState));
+      setLastRefreshAt(new Date().toISOString());
+    } catch (loadError) {
+      setStatus("error");
+      setError(errorMessage(loadError, "Unable to refresh workspace data."));
+    }
   }
 
   return (
@@ -109,7 +127,11 @@ export function WorkspaceShell() {
             Market
             <select
               value={market}
-              onChange={(event) => setMarket(event.target.value as Market)}
+              onChange={(event) => {
+                setMarket(event.target.value as Market);
+                setState(null);
+                setStatus("idle");
+              }}
               className="bg-transparent text-sm font-medium text-zinc-100 outline-none"
             >
               {markets.map((item) => (
@@ -125,7 +147,11 @@ export function WorkspaceShell() {
               <Search className="h-4 w-4" aria-hidden="true" />
               <input
                 value={manualMarket}
-                onChange={(event) => setManualMarket(event.target.value)}
+                onChange={(event) => {
+                  setManualMarket(event.target.value);
+                  setState(null);
+                  setStatus("idle");
+                }}
                 placeholder="Enter symbol"
                 className="w-full bg-transparent text-sm font-medium uppercase text-zinc-100 outline-none placeholder:text-zinc-600"
               />
@@ -136,65 +162,48 @@ export function WorkspaceShell() {
             label="Timeframe"
             value={timeframe}
             options={timeframes}
-            onChange={(value) => setTimeframe(value as Timeframe)}
+            onChange={(value) => {
+              setTimeframe(value as Timeframe);
+              setState(null);
+              setStatus("idle");
+            }}
           />
-          <SegmentedControl label="Range" value={range} options={ranges} onChange={(value) => setRange(value as Range)} />
+          <SegmentedControl
+            label="Range"
+            value={range}
+            options={ranges}
+            onChange={(value) => {
+              setRange(value as Range);
+              setState(null);
+              setStatus("idle");
+            }}
+          />
 
           <Button
             type="submit"
+            disabled={status === "loading" || !displayMarket}
             className="ml-auto h-10 gap-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 shadow-none hover:bg-emerald-500/20"
           >
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            {status === "loading" ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            )}
             Refresh Data
           </Button>
         </div>
       </form>
 
       <div className="grid min-h-[calc(100vh-65px)] grid-cols-1 grid-rows-[auto_1fr_auto] xl:grid-cols-[220px_minmax(0,1fr)_320px] xl:grid-rows-[1fr_auto]">
-        <aside className="border-b border-zinc-800 bg-[#080a0e] p-3 xl:border-b-0 xl:border-r">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium uppercase text-zinc-500">Watchlist</p>
-            <ListFilter className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-            {watchlist.map((item) => (
-              <button
-                key={item.symbol}
-                type="button"
-                onClick={() => setMarket(item.symbol as Exclude<Market, "Manual">)}
-                className={cn(
-                  "rounded-md border p-3 text-left transition-colors",
-                  displayMarket === item.symbol
-                    ? "border-emerald-400/50 bg-emerald-400/10"
-                    : "border-zinc-800 bg-[#0d1017] hover:border-zinc-700",
-                )}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-zinc-100">{item.symbol}</span>
-                  <span className={cn("text-xs", item.change.startsWith("+") ? "text-emerald-300" : "text-red-300")}>
-                    {item.change}
-                  </span>
-                </div>
-                <p className="mt-2 text-sm text-zinc-300">{item.price}</p>
-                <p className="mt-1 text-xs text-zinc-500">{item.state}</p>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-4 rounded-md border border-zinc-800 bg-black p-3">
-            <p className="text-xs font-medium uppercase text-zinc-500">Pipeline</p>
-            <ol className="mt-3 space-y-2 text-xs text-zinc-400">
-              {["Market", "Candles", "Stats", "Strategy", "Backtest", "Deploy"].map((step, index) => (
-                <li key={step} className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded border border-zinc-700 text-[10px] text-zinc-300">
-                    {index + 1}
-                  </span>
-                  {step}
-                </li>
-              ))}
-            </ol>
-          </div>
-        </aside>
+        <MarketRail
+          selectedSymbol={selectedSymbol}
+          state={state}
+          onSelect={(symbol) => {
+            setMarket(symbol as Exclude<Market, "Manual">);
+            setState(null);
+            setStatus("idle");
+          }}
+        />
 
         <main className="min-w-0 bg-[#050608]">
           <section className="border-b border-zinc-800 p-4">
@@ -202,70 +211,34 @@ export function WorkspaceShell() {
               <div>
                 <p className="text-xs uppercase text-zinc-500">Market / Chart</p>
                 <h1 className="mt-1 text-xl font-semibold tracking-normal text-zinc-50">
-                  {displayMarket} / USD Perpetual
+                  {selectedSymbol} / USD Perpetual
                 </h1>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Placeholder workspace state - {timeframe} candles over {range}
+                  {state ? `${state.market.timeframe} candles over ${state.market.range}` : "Select a market and refresh data to load workspace state."}
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {metrics.map((metric) => (
-                  <div key={metric.label} className="min-w-28 rounded-md border border-zinc-800 bg-[#0d1017] px-3 py-2">
-                    <p className="text-[11px] uppercase text-zinc-500">{metric.label}</p>
-                    <p className={cn("mt-1 text-sm font-medium", metric.tone)}>{metric.value}</p>
-                  </div>
-                ))}
-              </div>
+              <MetricStrip state={state} stats={stats} />
             </div>
           </section>
 
           <section className="p-4">
             <div className="relative min-h-[360px] overflow-hidden rounded-md border border-zinc-800 bg-black md:min-h-[440px]">
-              <div className="absolute inset-x-0 top-0 flex items-center justify-between border-b border-zinc-900 bg-[#07090d]/95 px-4 py-3">
+              <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-zinc-900 bg-[#07090d]/95 px-4 py-3">
                 <div className="flex items-center gap-2 text-sm text-zinc-300">
                   <LineChart className="h-4 w-4 text-emerald-300" aria-hidden="true" />
                   Candle view
                 </div>
                 <div className="flex items-center gap-2 text-xs text-zinc-500">
                   <Clock3 className="h-4 w-4" aria-hidden="true" />
-                  Refreshes: {refreshCount}
+                  {lastRefreshAt ? `Last refresh ${formatDateTime(lastRefreshAt)}` : "Not refreshed"}
                 </div>
               </div>
-              <PlaceholderChart />
+              <CandleChart candles={state?.latest_candles ?? []} stage={stateStage} />
             </div>
           </section>
         </main>
 
-        <aside className="border-t border-zinc-800 bg-[#080a0e] p-4 xl:border-l xl:border-t-0">
-          <div className="flex items-center gap-2">
-            <Bot className="h-4 w-4 text-sky-300" aria-hidden="true" />
-            <p className="text-sm font-medium">Assistant / Intelligence</p>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            <IntelligenceBlock
-              icon={TrendingUp}
-              title="Current Market"
-              value="Bull Trend"
-              detail="Trend and volatility are placeholder values until workspace orchestration is added."
-              tone="emerald"
-            />
-            <IntelligenceBlock
-              icon={ShieldCheck}
-              title="Strategy Gate"
-              value="Not evaluated"
-              detail="Run a backtest from the workspace to see promotion readiness."
-              tone="amber"
-            />
-            <IntelligenceBlock
-              icon={Activity}
-              title="Next Action"
-              value="Refresh Data"
-              detail="This ticket uses placeholder data only. Backend orchestration remains intentionally absent."
-              tone="sky"
-            />
-          </div>
-        </aside>
+        <IntelligencePanel state={state} stats={stats} stage={stateStage} error={error} />
 
         <section className="border-t border-zinc-800 bg-[#080a0e] xl:col-span-3">
           <div className="flex overflow-x-auto border-b border-zinc-800 px-3">
@@ -286,10 +259,143 @@ export function WorkspaceShell() {
               </button>
             ))}
           </div>
-          <BottomPanel activeTab={activeTab} market={displayMarket} timeframe={timeframe} />
+          <BottomPanel activeTab={activeTab} market={selectedSymbol} timeframe={timeframe} state={state} />
         </section>
       </div>
     </div>
+  );
+}
+
+function MarketRail({
+  selectedSymbol,
+  state,
+  onSelect,
+}: {
+  selectedSymbol: string;
+  state: WorkspaceState | null;
+  onSelect: (symbol: string) => void;
+}) {
+  return (
+    <aside className="border-b border-zinc-800 bg-[#080a0e] p-3 xl:border-b-0 xl:border-r">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase text-zinc-500">Watchlist</p>
+        <ListFilter className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+        {["BTC", "ETH", "SOL", "HYPE"].map((symbol) => (
+          <button
+            key={symbol}
+            type="button"
+            onClick={() => onSelect(symbol)}
+            className={cn(
+              "rounded-md border p-3 text-left transition-colors",
+              selectedSymbol === symbol
+                ? "border-emerald-400/50 bg-emerald-400/10"
+                : "border-zinc-800 bg-[#0d1017] hover:border-zinc-700",
+            )}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-zinc-100">{symbol}</span>
+              <span className="text-xs text-zinc-500">hyperliquid</span>
+            </div>
+            <p className="mt-2 text-sm text-zinc-300">
+              {state?.market.symbol === symbol && state.latest_candles.length > 0
+                ? formatPrice(state.latest_candles[state.latest_candles.length - 1]?.close)
+                : "--"}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {state?.market.symbol === symbol ? state.data_health.status : "not loaded"}
+            </p>
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 rounded-md border border-zinc-800 bg-black p-3">
+        <p className="text-xs font-medium uppercase text-zinc-500">Pipeline</p>
+        <ol className="mt-3 space-y-2 text-xs text-zinc-400">
+          {pipelineSteps(state).map((item, index) => (
+            <li key={item.label} className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded border text-[10px]",
+                  item.ready ? "border-emerald-400/40 text-emerald-200" : "border-zinc-700 text-zinc-500",
+                )}
+              >
+                {index + 1}
+              </span>
+              {item.label}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </aside>
+  );
+}
+
+function MetricStrip({ state, stats }: { state: WorkspaceState | null; stats: ChartStats }) {
+  const metrics = [
+    { label: "Latest Price", value: stats.latestPrice !== null ? formatPrice(stats.latestPrice) : "--", tone: "text-zinc-100" },
+    { label: "Period Return", value: stats.periodReturn !== null ? formatPercent(stats.periodReturn) : "--", tone: stats.periodReturn !== null && stats.periodReturn >= 0 ? "text-emerald-300" : "text-red-300" },
+    { label: "Volatility", value: stats.volatility !== null ? formatPercent(stats.volatility) : "--", tone: "text-sky-300" },
+    { label: "Candles", value: String(state?.candle_summary.total_candles ?? 0), tone: "text-zinc-300" },
+    { label: "Latest Candle", value: state?.candle_summary.latest_candle_timestamp ? formatDateTime(state.candle_summary.latest_candle_timestamp) : "--", tone: "text-zinc-300" },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      {metrics.map((metric) => (
+        <div key={metric.label} className="min-w-28 rounded-md border border-zinc-800 bg-[#0d1017] px-3 py-2">
+          <p className="text-[11px] uppercase text-zinc-500">{metric.label}</p>
+          <p className={cn("mt-1 text-sm font-medium", metric.tone)}>{metric.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function IntelligencePanel({
+  state,
+  stats,
+  stage,
+  error,
+}: {
+  state: WorkspaceState | null;
+  stats: ChartStats;
+  stage: StageState;
+  error: string | null;
+}) {
+  const regime = state?.current_regime;
+  return (
+    <aside className="border-t border-zinc-800 bg-[#080a0e] p-4 xl:border-l xl:border-t-0">
+      <div className="flex items-center gap-2">
+        <Bot className="h-4 w-4 text-sky-300" aria-hidden="true" />
+        <p className="text-sm font-medium">Assistant / Intelligence</p>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        <IntelligenceBlock
+          icon={Activity}
+          title="Data Health"
+          value={stage.title}
+          detail={error ?? stage.detail}
+          tone={stage.tone}
+        />
+        <IntelligenceBlock
+          icon={TrendingUp}
+          title="Current Regime"
+          value={regime?.regime_label ?? "Not computed"}
+          detail={regime?.explanation ?? regimeMissingDetail(state)}
+          tone={regime ? "emerald" : "amber"}
+        />
+        <IntelligenceBlock
+          icon={BarChart3}
+          title="Stats"
+          value={stats.latestPrice !== null ? `${formatPrice(stats.latestPrice)} last` : "Waiting for candles"}
+          detail={`Return ${stats.periodReturn !== null ? formatPercent(stats.periodReturn) : "--"}; volatility ${stats.volatility !== null ? formatPercent(stats.volatility) : "--"}.`}
+          tone="sky"
+        />
+      </div>
+    </aside>
   );
 }
 
@@ -325,46 +431,91 @@ function SegmentedControl({
   );
 }
 
-function PlaceholderChart() {
+function CandleChart({ candles, stage }: { candles: Candle[]; stage: StageState }) {
+  if (candles.length === 0) {
+    return (
+      <div className="flex min-h-[360px] items-center justify-center px-6 pt-12 text-center md:min-h-[440px]">
+        <div>
+          <p className="text-lg font-semibold text-zinc-100">{stage.title}</p>
+          <p className="mt-2 max-w-md text-sm leading-6 text-zinc-500">{stage.detail}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const width = 900;
+  const height = 360;
+  const padding = { top: 58, right: 24, bottom: 42, left: 42 };
+  const prices = candles.flatMap((candle) => [candle.high, candle.low]);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const priceRange = Math.max(maxPrice - minPrice, 1);
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const candleWidth = Math.max(3, Math.min(10, innerWidth / candles.length / 1.8));
+  const volumeMax = Math.max(...candles.map((candle) => candle.volume), 1);
+
+  function x(index: number) {
+    if (candles.length === 1) return padding.left + innerWidth / 2;
+    return padding.left + (index / (candles.length - 1)) * innerWidth;
+  }
+
+  function y(price: number) {
+    return padding.top + ((maxPrice - price) / priceRange) * innerHeight;
+  }
+
   return (
-    <svg viewBox="0 0 600 300" className="h-[360px] w-full md:h-[440px]" role="img" aria-label="Placeholder candlestick chart">
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-[360px] w-full md:h-[440px]" role="img" aria-label="Market candle chart">
       <defs>
-        <pattern id="workspace-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#18181b" strokeWidth="0.8" />
+        <pattern id="workspace-grid" width="44" height="44" patternUnits="userSpaceOnUse">
+          <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#18181b" strokeWidth="0.8" />
         </pattern>
       </defs>
-      <rect width="600" height="300" fill="#020304" />
-      <rect width="600" height="300" fill="url(#workspace-grid)" />
-      <path d="M18 122 L84 96 L150 83 L216 92 L282 70 L348 58 L414 62 L480 50 L568 36" fill="none" stroke="#10b981" strokeWidth="1.5" opacity="0.5" />
-      <path d="M18 146 L84 132 L150 119 L216 128 L282 107 L348 98 L414 102 L480 90 L568 84" fill="none" stroke="#38bdf8" strokeWidth="1.2" opacity="0.45" />
-      {candles.map((candle) => (
-        <g key={candle.x}>
-          <line
-            x1={candle.x}
-            x2={candle.x}
-            y1={candle.high}
-            y2={candle.low}
-            stroke={candle.up ? "#34d399" : "#fb7185"}
-            strokeWidth="1.5"
-          />
-          <rect
-            x={candle.x - 4}
-            y={Math.min(candle.open, candle.close)}
-            width="8"
-            height={Math.max(4, Math.abs(candle.open - candle.close))}
-            fill={candle.up ? "#34d399" : "#fb7185"}
-            opacity="0.9"
-            rx="1"
-          />
-        </g>
-      ))}
-      <g opacity="0.45">
-        {[120, 150, 182, 210, 238, 265].map((y, index) => (
-          <rect key={y} x={18 + index * 92} y={y} width="34" height={280 - y} fill="#71717a" />
-        ))}
-      </g>
-      <text x="20" y="286" fill="#71717a" fontSize="10">
-        Placeholder data - backend orchestration not connected
+      <rect width={width} height={height} fill="#020304" />
+      <rect width={width} height={height} fill="url(#workspace-grid)" />
+      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+        const price = maxPrice - ratio * priceRange;
+        return (
+          <g key={ratio}>
+            <line x1={padding.left} x2={width - padding.right} y1={y(price)} y2={y(price)} stroke="#27272a" strokeWidth="1" />
+            <text x={8} y={y(price) + 4} fill="#71717a" fontSize="10">
+              {formatPrice(price)}
+            </text>
+          </g>
+        );
+      })}
+      {candles.map((candle, index) => {
+        const up = candle.close >= candle.open;
+        const color = up ? "#34d399" : "#fb7185";
+        const center = x(index);
+        const bodyY = Math.min(y(candle.open), y(candle.close));
+        const bodyHeight = Math.max(2, Math.abs(y(candle.open) - y(candle.close)));
+        const volumeHeight = (candle.volume / volumeMax) * 42;
+        return (
+          <g key={candle.id}>
+            <rect
+              x={center - candleWidth / 2}
+              y={height - padding.bottom - volumeHeight}
+              width={candleWidth}
+              height={volumeHeight}
+              fill="#3f3f46"
+              opacity="0.45"
+            />
+            <line x1={center} x2={center} y1={y(candle.high)} y2={y(candle.low)} stroke={color} strokeWidth="1.4" />
+            <rect
+              x={center - candleWidth / 2}
+              y={bodyY}
+              width={candleWidth}
+              height={bodyHeight}
+              fill={color}
+              opacity="0.92"
+              rx="1"
+            />
+          </g>
+        );
+      })}
+      <text x={padding.left} y={height - 14} fill="#71717a" fontSize="10">
+        {candles.length} latest candles
       </text>
     </svg>
   );
@@ -381,12 +532,13 @@ function IntelligenceBlock({
   title: string;
   value: string;
   detail: string;
-  tone: "emerald" | "amber" | "sky";
+  tone: "emerald" | "amber" | "sky" | "red";
 }) {
   const toneClass = {
     emerald: "text-emerald-300 border-emerald-400/20 bg-emerald-400/5",
     amber: "text-amber-300 border-amber-400/20 bg-amber-400/5",
     sky: "text-sky-300 border-sky-400/20 bg-sky-400/5",
+    red: "text-red-300 border-red-400/20 bg-red-400/5",
   }[tone];
 
   return (
@@ -410,13 +562,23 @@ function TabIcon({ tab }: { tab: Tab }) {
   return <Terminal className={className} aria-hidden="true" />;
 }
 
-function BottomPanel({ activeTab, market, timeframe }: { activeTab: Tab; market: string; timeframe: Timeframe }) {
+function BottomPanel({
+  activeTab,
+  market,
+  timeframe,
+  state,
+}: {
+  activeTab: Tab;
+  market: string;
+  timeframe: Timeframe;
+  state: WorkspaceState | null;
+}) {
   if (activeTab === "Strategy") {
     return (
       <PanelGrid>
-        <PanelItem icon={Braces} label="Template" value="SMA Crossover" />
-        <PanelItem icon={Settings2} label="Parameters" value="Fast 20 / Slow 50" />
-        <PanelItem icon={ShieldCheck} label="Allowed Regimes" value="Bull Trend, Range" />
+        <PanelItem icon={Braces} label="Templates" value={`${state?.available_strategy_templates.length ?? 0} available`} />
+        <PanelItem icon={Settings2} label="Parameters" value="Backtest orchestration pending" />
+        <PanelItem icon={ShieldCheck} label="Allowed Regimes" value={state?.current_regime?.regime_label ?? "Compute regime first"} />
         <PanelItem icon={Play} label="Ready State" value={`Configure ${market} ${timeframe}`} />
       </PanelGrid>
     );
@@ -425,8 +587,8 @@ function BottomPanel({ activeTab, market, timeframe }: { activeTab: Tab; market:
   if (activeTab === "Backtests") {
     return (
       <PanelGrid>
-        <PanelItem icon={BarChart3} label="Latest Verdict" value="No run yet" />
-        <PanelItem icon={TrendingUp} label="Total Return" value="--" />
+        <PanelItem icon={BarChart3} label="Latest Runs" value={`${state?.latest_backtests.length ?? 0} found`} />
+        <PanelItem icon={TrendingUp} label="Total Return" value="Run backtest next" />
         <PanelItem icon={Activity} label="Trade Count" value="--" />
         <PanelItem icon={ShieldCheck} label="Promotion Gate" value="Waiting for backtest" />
       </PanelGrid>
@@ -439,7 +601,7 @@ function BottomPanel({ activeTab, market, timeframe }: { activeTab: Tab; market:
         <PanelItem icon={SlidersHorizontal} label="Objective" value="Risk-adjusted score" />
         <PanelItem icon={BarChart3} label="Grid Runs" value="0 queued" />
         <PanelItem icon={TrendingUp} label="Best Candidate" value="Not available" />
-        <PanelItem icon={Play} label="Action" value="Orchestration pending" />
+        <PanelItem icon={Play} label="Action" value="Backtest orchestration pending" />
       </PanelGrid>
     );
   }
@@ -448,8 +610,8 @@ function BottomPanel({ activeTab, market, timeframe }: { activeTab: Tab; market:
     return (
       <div className="p-4">
         <div className="rounded-md border border-zinc-800 bg-black p-4 text-sm leading-6 text-zinc-400">
-          Notes will capture research observations for the active workspace. This shell intentionally uses placeholder
-          data only.
+          Notes will capture research observations for the active workspace. Market data is now loaded through the
+          workspace API; strategy and backtest orchestration come later.
         </div>
       </div>
     );
@@ -460,7 +622,8 @@ function BottomPanel({ activeTab, market, timeframe }: { activeTab: Tab; market:
       <div className="font-mono text-xs leading-6 text-zinc-400">
         <p>[workspace] selected market={market}</p>
         <p>[workspace] selected timeframe={timeframe}</p>
-        <p>[workspace] backend orchestration disabled for UX-1</p>
+        <p>[workspace] dataset_id={state?.dataset_id ?? "none"}</p>
+        <p>[workspace] data_health={state?.data_health.status ?? "idle"}</p>
       </div>
     </div>
   );
@@ -480,4 +643,87 @@ function PanelItem({ icon: Icon, label, value }: { icon: LucideIcon; label: stri
       <p className="mt-3 text-sm font-medium text-zinc-100">{value}</p>
     </div>
   );
+}
+
+type ChartStats = {
+  latestPrice: number | null;
+  periodReturn: number | null;
+  volatility: number | null;
+};
+
+type StageState = {
+  title: string;
+  detail: string;
+  tone: "emerald" | "amber" | "sky" | "red";
+};
+
+function computeChartStats(candles: Candle[]): ChartStats {
+  if (candles.length === 0) return { latestPrice: null, periodReturn: null, volatility: null };
+  const first = candles[0];
+  const latest = candles[candles.length - 1];
+  const returns = candles.slice(1).map((candle, index) => {
+    const previous = candles[index];
+    return previous.close === 0 ? 0 : candle.close / previous.close - 1;
+  });
+  const mean = returns.reduce((sum, value) => sum + value, 0) / Math.max(returns.length, 1);
+  const variance = returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(returns.length, 1);
+  return {
+    latestPrice: latest.close,
+    periodReturn: first.close === 0 ? null : latest.close / first.close - 1,
+    volatility: returns.length > 0 ? Math.sqrt(variance) : null,
+  };
+}
+
+function getStateStage(state: WorkspaceState | null, status: WorkspaceStatus, error: string | null): StageState {
+  if (status === "error") return { title: "Error", detail: error ?? "Workspace request failed.", tone: "red" };
+  if (status === "loading") return { title: "Loading", detail: "Resolving market data and requesting workspace state.", tone: "sky" };
+  if (!state) return { title: "No market loaded", detail: "Select a market, timeframe, and range, then refresh data.", tone: "amber" };
+  if (state.data_health.status === "queued") return { title: "Ingestion queued", detail: state.data_health.detail, tone: "amber" };
+  if (state.data_health.status === "running") return { title: "Ingestion running", detail: state.data_health.detail, tone: "sky" };
+  if (state.data_health.status === "failed") return { title: "Data load failed", detail: state.data_health.detail, tone: "red" };
+  if (state.candle_summary.total_candles === 0) return { title: "No candles", detail: "Refresh data to fetch candles for this market.", tone: "amber" };
+  if (!state.feature_summary || state.feature_summary.total_snapshots === 0) return { title: "Features missing", detail: "Candles are loaded; workspace stats are being computed.", tone: "amber" };
+  if (!state.current_regime) return { title: "Regime missing", detail: "Stats are ready; market regime is being computed.", tone: "amber" };
+  return { title: "Ready", detail: state.data_health.detail, tone: "emerald" };
+}
+
+function statusFromState(state: WorkspaceState): WorkspaceStatus {
+  if (state.data_health.status === "queued") return "queued";
+  if (state.data_health.status === "running") return "running";
+  return "ready";
+}
+
+function pipelineSteps(state: WorkspaceState | null) {
+  return [
+    { label: "Market", ready: Boolean(state?.market.symbol) },
+    { label: "Candles", ready: (state?.candle_summary.total_candles ?? 0) > 0 },
+    { label: "Stats", ready: (state?.feature_summary?.total_snapshots ?? 0) > 0 },
+    { label: "Regime", ready: Boolean(state?.current_regime) },
+    { label: "Backtest", ready: (state?.latest_backtests.length ?? 0) > 0 },
+    { label: "Deploy", ready: false },
+  ];
+}
+
+function regimeMissingDetail(state: WorkspaceState | null) {
+  if (!state) return "Load a market to compute regime from feature snapshots.";
+  if (state.candle_summary.total_candles === 0) return "Candles are required before regime detection.";
+  if (!state.feature_summary || state.feature_summary.total_snapshots === 0) return "Stats are required before regime detection.";
+  return "Regime computation is pending.";
+}
+
+function formatPrice(value: number | undefined | null) {
+  if (value === null || value === undefined) return "--";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: value >= 100 ? 1 : 4 }).format(value);
+}
+
+function formatPercent(value: number) {
+  return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString();
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }

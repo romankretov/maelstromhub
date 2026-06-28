@@ -126,7 +126,16 @@ class WorkspaceService:
 
         candle_summary = await self._candle_summary(session, dataset.id)
         feature_summary = await get_feature_summary(session, dataset.id)
+        if candle_summary.total_candles > 0 and feature_summary.total_snapshots == 0:
+            feature_job = await enqueue_dataset_feature_compute(session, dataset.id, FeatureComputeRequest())
+            await run_feature_ingestion_job(session, feature_job.id)
+            feature_summary = await get_feature_summary(session, dataset.id)
+
         current_regime = await self.regime_service.current_regime(session, dataset.id)
+        if feature_summary.total_snapshots > 0 and current_regime is None:
+            await self.regime_service.compute_regimes(session, dataset.id)
+            current_regime = await self.regime_service.current_regime(session, dataset.id)
+
         return WorkspaceState(
             market=WorkspaceMarketMetadata(
                 symbol=normalized_symbol,
