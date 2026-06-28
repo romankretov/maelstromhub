@@ -41,24 +41,6 @@ export const navigationItems = [
   { title: "Settings", href: "/settings", icon: Settings },
 ] as const;
 
-export const placeholderStrategies = [
-  {
-    name: "Funding Fade Prototype",
-    status: "Draft",
-    description: "Idea captured and ready for strategy rules, assumptions, and review notes.",
-  },
-  {
-    name: "Momentum Continuation Study",
-    status: "Backtested",
-    description: "Backtest placeholder for comparing assumptions before any paper trading work.",
-  },
-  {
-    name: "Basis Watchlist",
-    status: "Paper Trading",
-    description: "Paper workflow placeholder. No live order placement is implemented.",
-  },
-] as const;
-
 type SafetyNote = {
   label: string;
   value: string;

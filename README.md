@@ -55,25 +55,26 @@ Web:
 
 ```bash
 npm install
-npm run dev:web
+NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev:web
 ```
 
 API:
 
 ```bash
+docker compose up postgres redis
 cd apps/api
 python -m venv .venv
 . .venv/bin/activate
 pip install -e ../../packages/core -e ".[dev]"
+alembic -c alembic.ini upgrade head
+python -m scripts.seed
 uvicorn app.main:app --reload
 ```
 
-Database migrations and seed data from a local API venv:
+The first supported workflow is:
 
-```bash
-cd apps/api
-alembic -c alembic.ini upgrade head
-python -m scripts.seed
+```text
+Ideas Lab: create idea -> Strategy Builder: create Draft strategy
 ```
 
 Local database reset:
