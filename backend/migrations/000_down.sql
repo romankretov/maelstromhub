@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS job_locks;
+DROP TABLE IF EXISTS ingestion_runs;
+DROP TABLE IF EXISTS flags;
+DROP TABLE IF EXISTS features;
+DROP TABLE IF EXISTS recent_trade_snapshots;
+DROP TABLE IF EXISTS orderbook_snapshots;
+DROP TABLE IF EXISTS candles;
+DROP TABLE IF EXISTS market_snapshots;
+DROP TABLE IF EXISTS markets;

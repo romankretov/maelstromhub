@@ -1,41 +1,24 @@
 # Architecture
 
-Maelstromhub is organized as a small monorepo with separate applications and shared packages.
+Maelstrom is intentionally split into ingestion, storage, feature computation, API, and dashboard layers.
 
-## Components
+## Backend Packages
 
-- `apps/api`: FastAPI service. Owns HTTP contracts, request validation, and service orchestration.
-- `apps/web`: Next.js application. Owns the browser experience, workflow screens, and API consumption.
-- `apps/worker`: Background process for scheduled and queued work.
-- `packages/core`: Shared Python package for domain models used by API and worker.
-- `docker-compose.yml`: Local infrastructure and service orchestration.
+- `hyperliquid`: typed `/info` client with retries, validation, and limiter integration
+- `limiter`: central weighted token bucket with endpoint cooldowns
+- `ingest`: tiered scheduler and job isolation
+- `store`: database and Redis access
+- `features`: deterministic research features, flags, regimes, and scoring
+- `api`: REST JSON handlers
 
-## Local runtime
+## Data Model
 
-Docker Compose starts:
+The database stores raw-enough market data for auditability and clean derived feature rows for fast dashboard reads.
 
-- Postgres for durable relational state.
-- Redis for queues, caching, and lightweight coordination.
-- API on port `8000`.
-- Worker as a long-running background process.
-- Web on port `3000`.
+Timescale hypertables are created when TimescaleDB is available. The same tables work as regular PostgreSQL tables otherwise.
 
-## Dependency direction
+## Failure Handling
 
-```text
-apps/api ----\
-              > packages/core
-apps/worker -/
+Hyperliquid failures are isolated per job. A failed candle pull does not stop metadata ingestion. A 429 pauses the affected endpoint class rather than letting workers spam the API.
 
-apps/web ---> apps/api over HTTP
-```
-
-The web app does not import Python packages. The API and worker may import `packages/core`, but `packages/core` should not import application code.
-
-## Data model posture
-
-The current repository only defines lightweight domain placeholders. Persistent schema design should be introduced with migrations once the research workflows are better specified.
-
-## Trading posture
-
-No component should place orders, manage keys, or call private trading APIs until the safety architecture exists. Future trading work must include explicit risk limits, audit logs, simulation coverage, and operator controls.
+Dashboard reads use stored data and can remain useful while the upstream API is slow or rate-limiting.
